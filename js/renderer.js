@@ -5,10 +5,25 @@
 
 import { mulberry32 } from './maze.js';
 
-const FACADE_PALETTE = ['#5b6f87', '#7a6a55', '#6f5b75', '#5a7a6a', '#876f54'];
-const ROAD = '#2a2a2a';
-const SIDEWALK = '#3a3a3a';
-const LANE_DASH = 'rgba(240, 220, 100, 0.7)';
+// Bright daytime palette for the maze canvas (the surrounding app UI stays dark).
+const GRASS = '#86bf52';
+const ROAD = '#9a9da2';
+const SIDEWALK = '#c4c7cb';
+const LANE_DASH = 'rgba(255, 255, 255, 0.9)';
+const TREE_TRUNK = '#7c5a3a';
+const TREE_GREENS = ['#3f8f3a', '#4ba343', '#5aa84e', '#357f31']; // round (deciduous) trees
+const PINE_GREENS = ['#2f6e3a', '#27613a', '#356f44'];            // conifers — darker
+const BUSH_GREENS = ['#6cb95a', '#7cc266', '#5fae4d'];            // bushes — lighter
+const BUILDING_FACADES = [
+  '#e6d6ad', '#d9c79c', '#cdb98c', '#e3c9a0',  // warm tans / creams
+  '#dcc2a0', '#cdd3c0', '#e0cab8', '#c9c2b0',  // muted greige / sage
+  '#f4f1ea', '#eef0f3', '#f6f5f2',             // whites
+  '#d8dbde', '#c6cacd', '#cdd0d3',             // light grays
+];
+const BUILDING_ROOFS = ['#b65b38', '#9c4f33', '#6f4e3d', '#7d8a93', '#a8523f', '#566069'];
+
+// Wall-gap thickness as a fraction of the road-cell size.
+const WALL_RATIO = 0.42;
 
 const STEP_MS = 380;        // per-step animation duration (slower so the player can read each line)
 const RESET_MS = 420;       // duration of return-to-start animation on fail
@@ -25,10 +40,10 @@ export class Renderer {
     this.ctx = canvas.getContext('2d');
     this.dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
     this.maze = null;
-    this.cellPx = mobileViewport() ? 48 : 56;
+    this.cellPx = mobileViewport() ? 40 : 48; // road-cell size
+    this.wallPx = 0;                          // wall-gap thickness (set in _resizeCanvas)
     this.car = { col: 0, row: 0, heading: HEADING.E }; // logical
     this._displayCar = { x: 0, y: 0, heading: HEADING.E }; // animated
-    this._buildingSeeds = null;
     this._aborted = false;
   }
 
@@ -36,7 +51,6 @@ export class Renderer {
     this.maze = maze;
     this.cellPx = this.computeCellPx(maze.cols);
     this._resizeCanvas();
-    this._buildingSeeds = this._buildSeedTable(maze);
     const startHeading = this._headingForOpenRoad(0, 0);
     this.car = { col: 0, row: 0, heading: startHeading };
     const start = this._cellCenter(0, 0);
@@ -44,17 +58,18 @@ export class Renderer {
     this.render();
   }
 
-  // Pick the largest cell size that lets `cols` columns fit inside the canvas
-  // wrapper, capped at the natural size for the current viewport. Keeps the
-  // 9×9 from overflowing a 375px phone, while leaving small mazes crisp.
+  // Pick the largest road-cell size that lets the whole board (roads + wall
+  // gaps) fit inside the canvas wrapper, capped at the natural size for the
+  // current viewport. Total board width ≈ road*cols + wall*(cols+1), and
+  // wall ≈ WALL_RATIO*road, so width ≈ road*(cols + WALL_RATIO*(cols+1)).
   computeCellPx(cols) {
-    const natural = mobileViewport() ? 48 : 56;
+    const natural = mobileViewport() ? 40 : 48;
     const wrap = this.canvas.parentElement;
     const wrapWidth = wrap ? wrap.clientWidth : window.innerWidth;
-    // canvas-wrap padding eats some width (4px each side on mobile, 8px on desktop).
     const padding = mobileViewport() ? 8 : 16;
-    const fit = Math.floor((wrapWidth - padding) / cols);
-    return Math.max(20, Math.min(natural, fit));
+    const avail = wrapWidth - padding;
+    const fit = Math.floor(avail / (cols + WALL_RATIO * (cols + 1)));
+    return Math.max(18, Math.min(natural, fit));
   }
 
   // Returns a HEADING that points toward an open passage from (col,row).
@@ -363,145 +378,299 @@ export class Renderer {
 
     ctx.save();
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    ctx.fillStyle = '#0a0d11';
+
+    // Grass background — every non-road area shows through as green.
+    ctx.fillStyle = GRASS;
     ctx.fillRect(0, 0, w, h);
 
     const { cols, rows, grid } = this.maze;
-    const s = this.cellPx;
 
-    // Pass 1: roads (passable cells), pass 2: buildings (impassable would be… in a perfect maze, every cell is reachable).
-    // Here, "buildings" sit between cells: a cell whose passage in dir D is closed has a wall on that side.
-    // To get the spec's look we treat each cell as a road tile and draw building rectangles in the gaps (the wall blocks).
-    //
-    // Specifically the spec talks about "city blocks (walls)" — these are the impassable corners between 4 cells.
-    // We draw them as small building tiles at the inter-cell intersections plus along closed cell boundaries.
-
-    // Draw all road tiles.
+    // Road cells.
     for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        this._drawRoadCell(c, r, s);
-      }
+      for (let c = 0; c < cols; c++) this._drawRoadCell(c, r);
     }
-
-    // Draw walls / buildings between adjacent cells (where the passage is closed).
+    // Road connectors filling the wall gaps at open passages.
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const cell = grid[r][c];
-        // North wall (only draw for top row; otherwise the south wall of the cell above handles it)
-        if (!cell.n && r === 0) this._drawWall(c, r, 'n', s);
-        if (!cell.w && c === 0) this._drawWall(c, r, 'w', s);
-        if (!cell.e) this._drawWall(c, r, 'e', s);
-        if (!cell.s) this._drawWall(c, r, 's', s);
+        if (cell.e && c < cols - 1) this._drawConnector(c, r, 'e');
+        if (cell.s && r < rows - 1) this._drawConnector(c, r, 's');
       }
     }
-
+    // Dashed lane markings down the corridors.
+    this._drawLaneMarkings();
+    // Trees and buildings in the green blocks.
+    this._drawScenery();
     // Start + destination overlays.
-    this._drawStartDest(s);
-
+    this._drawStartDest();
     // Car (drawn last so it is on top).
     this._drawCar();
 
     ctx.restore();
   }
 
-  _drawRoadCell(c, r, s) {
+  _drawRoadCell(c, r) {
     const ctx = this.ctx;
-    const x = c * s, y = r * s;
-
-    // Asphalt fill.
+    const { x, y, size } = this._cellRect(c, r);
     ctx.fillStyle = ROAD;
-    ctx.fillRect(x, y, s, s);
+    ctx.fillRect(x, y, size, size);
 
-    // Sidewalk band inset (only where walls exist on that side).
+    // Sidewalk edge wherever the road tile meets grass (a closed side).
     const cell = this.maze.grid[r][c];
-    const inset = 4;
+    const inset = Math.max(2, size * 0.08);
     ctx.fillStyle = SIDEWALK;
-    if (!cell.n) ctx.fillRect(x, y, s, inset);
-    if (!cell.s) ctx.fillRect(x, y + s - inset, s, inset);
-    if (!cell.w) ctx.fillRect(x, y, inset, s);
-    if (!cell.e) ctx.fillRect(x + s - inset, y, inset, s);
+    if (!cell.n) ctx.fillRect(x, y, size, inset);
+    if (!cell.s) ctx.fillRect(x, y + size - inset, size, inset);
+    if (!cell.w) ctx.fillRect(x, y, inset, size);
+    if (!cell.e) ctx.fillRect(x + size - inset, y, inset, size);
+  }
 
-    // Dashed lane markings between adjacent road cells.
-    // We add a dashed line spanning the corridor between the centres of this cell and the neighbour.
-    const open = ['n','s','e','w'].filter(k => cell[k]).length;
-    const drawDash = open <= 2; // skip dashes for 3- or 4-way intersections (looks busier without them)
-    if (drawDash) {
-      ctx.save();
-      ctx.strokeStyle = LANE_DASH;
-      ctx.lineWidth = 1.2;
-      ctx.setLineDash([4, 5]);
-      ctx.beginPath();
-      const cx = x + s / 2, cy = y + s / 2;
-      if (cell.e) { ctx.moveTo(cx, cy); ctx.lineTo(x + s, cy); }
-      if (cell.w) { ctx.moveTo(cx, cy); ctx.lineTo(x, cy); }
-      if (cell.n) { ctx.moveTo(cx, cy); ctx.lineTo(cx, y); }
-      if (cell.s) { ctx.moveTo(cx, cy); ctx.lineTo(cx, y + s); }
-      ctx.stroke();
-      ctx.restore();
+  // Fills the wall gap between a cell and its E or S neighbour with road.
+  _drawConnector(c, r, side) {
+    const ctx = this.ctx;
+    const { x, y, size } = this._cellRect(c, r);
+    const wall = this.wallPx;
+    const inset = Math.max(2, size * 0.08);
+    ctx.fillStyle = ROAD;
+    if (side === 'e') {
+      ctx.fillRect(x + size, y, wall, size);
+      ctx.fillStyle = SIDEWALK;
+      ctx.fillRect(x + size, y, wall, inset);
+      ctx.fillRect(x + size, y + size - inset, wall, inset);
+    } else {
+      ctx.fillRect(x, y + size, size, wall);
+      ctx.fillStyle = SIDEWALK;
+      ctx.fillRect(x, y + size, inset, wall);
+      ctx.fillRect(x + size - inset, y + size, inset, wall);
     }
   }
 
-  _drawWall(c, r, side, s) {
-    // Draw a building strip along the closed side. Width depends on side.
+  _drawLaneMarkings() {
+    const { cols, rows, grid } = this.maze;
     const ctx = this.ctx;
-    const x = c * s, y = r * s;
-    const thickness = 4;
-    let bx, by, bw, bh;
-    if (side === 'n') { bx = x; by = y; bw = s; bh = thickness; }
-    else if (side === 's') { bx = x; by = y + s - thickness; bw = s; bh = thickness; }
-    else if (side === 'w') { bx = x; by = y; bw = thickness; bh = s; }
-    else { bx = x + s - thickness; by = y; bw = thickness; bh = s; }
-
-    // Pick a facade colour seeded by position so adjacent walls don't clash randomly.
-    const seedKey = `${c},${r},${side}`;
-    const seed = hashString(seedKey) >>> 0;
-    const palIdx = seed % FACADE_PALETTE.length;
-    ctx.fillStyle = FACADE_PALETTE[palIdx];
-    ctx.fillRect(bx, by, bw, bh);
-
-    // Roofline (darker band on top edge).
-    ctx.fillStyle = 'rgba(0,0,0,0.35)';
-    if (side === 'n') ctx.fillRect(bx, by, bw, 1);
-    else if (side === 's') ctx.fillRect(bx, by, bw, 1);
-    else if (side === 'w') ctx.fillRect(bx, by, 1, bh);
-    else ctx.fillRect(bx, by, 1, bh);
+    const dash = Math.max(3, this.cellPx * 0.18);
+    ctx.save();
+    ctx.strokeStyle = LANE_DASH;
+    ctx.lineWidth = Math.max(1, this.cellPx * 0.045);
+    ctx.setLineDash([dash, dash]);
+    ctx.beginPath();
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const cell = grid[r][c];
+        const a = this._cellCenter(c, r);
+        if (cell.e && c < cols - 1) {
+          const b = this._cellCenter(c + 1, r);
+          ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+        }
+        if (cell.s && r < rows - 1) {
+          const b = this._cellCenter(c, r + 1);
+          ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+        }
+      }
+    }
+    ctx.stroke();
+    ctx.restore();
   }
 
-  _drawStartDest(s) {
+  // Decorates the green blocks: closed wall gaps + corner blocks.
+  _drawScenery() {
+    const { cols, rows, grid } = this.maze;
+    // Corner blocks — small wall×wall squares, always green.
+    for (let gr = 0; gr <= rows; gr++) {
+      for (let gc = 0; gc <= cols; gc++) {
+        this._decorateSlot(2 * gc, 2 * gr, 'corner');
+      }
+    }
+    // Vertical wall slots (E/W gaps) — green when the passage is closed.
+    for (let r = 0; r < rows; r++) {
+      for (let sc = 0; sc <= cols; sc++) {
+        const closed = (sc === 0 || sc === cols) ? true : !grid[r][sc - 1].e;
+        if (closed) this._decorateSlot(2 * sc, 2 * r + 1, 'wall');
+      }
+    }
+    // Horizontal wall slots (N/S gaps) — green when the passage is closed.
+    for (let c = 0; c < cols; c++) {
+      for (let sr = 0; sr <= rows; sr++) {
+        const closed = (sr === 0 || sr === rows) ? true : !grid[sr - 1][c].s;
+        if (closed) this._decorateSlot(2 * c + 1, 2 * sr, 'wall');
+      }
+    }
+  }
+
+  _decorateSlot(sc, sr, kind) {
+    const x = this._slotX(sc), y = this._slotX(sr);
+    const w = this._slotSize(sc), h = this._slotSize(sr);
+    if (w < 2 || h < 2) return;
+    const seed = (hashString(`${sc}:${sr}:${kind}`) ^ (this.maze.seed | 0)) >>> 0;
+    const rand = mulberry32(seed);
+    const roll = rand();
+    const cx = x + w / 2, cy = y + h / 2;
+    if (kind === 'corner') {
+      // Small block — a plant or grass.
+      if (roll < 0.5) this._drawPlant(cx, cy, Math.min(w, h) * 1.5, rand, 'small');
+      return;
+    }
+    // Wall slot — building, plant, or grass.
+    if (roll < 0.46) {
+      this._drawBuilding(x, y, w, h, rand);
+    } else if (roll < 0.85) {
+      this._drawPlant(cx, cy, Math.min(w, h) * 1.9, rand, 'wall');
+    }
+  }
+
+  // Picks a plant type and draws it. Corner ('small') slots lean toward bushes;
+  // wall slots get the full round-tree / pine / bush mix.
+  _drawPlant(cx, cy, size, rand, context) {
+    const t = rand();
+    if (context === 'small') {
+      if (t < 0.68) return this._drawBush(cx, cy, size, rand);
+      return this._drawRoundTree(cx, cy, size * 0.9, rand);
+    }
+    if (t < 0.40) return this._drawRoundTree(cx, cy, size, rand);
+    if (t < 0.72) return this._drawPineTree(cx, cy, size, rand);
+    return this._drawBush(cx, cy, size * 0.9, rand);
+  }
+
+  _drawBuilding(x, y, w, h, rand) {
     const ctx = this.ctx;
+    const pad = Math.max(1, Math.min(w, h) * 0.12);
+    const bx = x + pad, by = y + pad, bw = w - pad * 2, bh = h - pad * 2;
+    if (bw < 3 || bh < 3) return;
 
-    // Start tile: blue tint border + "START" label.
-    ctx.save();
-    ctx.strokeStyle = 'rgba(96, 165, 250, 0.85)';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(2, 2, s - 4, s - 4);
-    ctx.fillStyle = 'rgba(96, 165, 250, 0.18)';
-    ctx.fillRect(2, 2, s - 4, s - 4);
-    ctx.fillStyle = 'rgba(219, 234, 254, 0.85)';
-    ctx.font = `600 ${Math.max(8, Math.floor(s * 0.18))}px ${fontStack()}`;
-    ctx.textBaseline = 'top';
-    ctx.fillText('START', 5, 5);
-    ctx.restore();
+    ctx.fillStyle = BUILDING_FACADES[Math.floor(rand() * BUILDING_FACADES.length)];
+    ctx.fillRect(bx, by, bw, bh);
 
-    // Destination tile: green tint, star, "DEST" label.
-    const { col: dCol, row: dRow } = this.maze.dest;
-    const dx = dCol * s;
-    const dy = dRow * s;
+    // Roof band along the top edge (colour varies per building).
+    const roof = Math.max(2, Math.min(bw, bh) * 0.34);
+    ctx.fillStyle = BUILDING_ROOFS[Math.floor(rand() * BUILDING_ROOFS.length)];
+    ctx.fillRect(bx, by, bw, roof);
+
+    // A couple of window dots on the facade below the roof, if there's room.
+    const winTop = by + roof + Math.max(1, bh * 0.08);
+    const winH = bh - roof - Math.max(1, bh * 0.08) * 2;
+    if (winH >= 3 && bw >= 6) {
+      ctx.fillStyle = 'rgba(70, 100, 140, 0.75)';
+      const winSize = Math.min(winH, bw * 0.22, 5);
+      const slots = Math.max(1, Math.floor(bw / (winSize * 2.2)));
+      const gap = bw / (slots + 1);
+      for (let i = 1; i <= slots; i++) {
+        ctx.fillRect(bx + gap * i - winSize / 2, winTop, winSize, Math.min(winSize, winH));
+      }
+    }
+  }
+
+  // Round (deciduous) tree — trunk + a 3-lobe canopy.
+  _drawRoundTree(cx, cy, size, rand) {
+    const ctx = this.ctx;
+    const trunkW = Math.max(2, size * 0.16);
+    const trunkH = Math.max(3, size * 0.30);
+    ctx.fillStyle = TREE_TRUNK;
+    ctx.fillRect(cx - trunkW / 2, cy + size * 0.04, trunkW, trunkH);
+
+    const green = TREE_GREENS[Math.floor(rand() * TREE_GREENS.length)];
+    const cr = size * 0.34;
+    ctx.fillStyle = green;
+    for (const [px, py] of [
+      [cx, cy - cr * 0.5],
+      [cx - cr * 0.72, cy + cr * 0.16],
+      [cx + cr * 0.72, cy + cr * 0.16],
+    ]) {
+      ctx.beginPath();
+      ctx.arc(px, py, cr, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.12)';
+    ctx.beginPath();
+    ctx.arc(cx + cr * 0.72, cy + cr * 0.16, cr * 0.82, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Pine / conifer — short trunk + 3 stacked triangle tiers, widest at the base.
+  _drawPineTree(cx, cy, size, rand) {
+    const ctx = this.ctx;
+    const trunkW = Math.max(2, size * 0.12);
+    const trunkH = Math.max(3, size * 0.20);
+    const bottom = cy + size * 0.46;
+    ctx.fillStyle = TREE_TRUNK;
+    ctx.fillRect(cx - trunkW / 2, bottom - trunkH, trunkW, trunkH);
+
+    ctx.fillStyle = PINE_GREENS[Math.floor(rand() * PINE_GREENS.length)];
+    const top = cy - size * 0.5;
+    const canopyBot = bottom - trunkH;
+    const tiers = 3;
+    for (let i = 0; i < tiers; i++) {
+      const frac = i / tiers;
+      const tierTopY = top + (canopyBot - top) * frac * 0.85;
+      const tierBotY = top + (canopyBot - top) * ((i + 1) / tiers);
+      const halfW = size * (0.18 + 0.22 * (1 - frac)); // wider at the bottom
+      ctx.beginPath();
+      ctx.moveTo(cx, tierTopY);
+      ctx.lineTo(cx - halfW, tierBotY);
+      ctx.lineTo(cx + halfW, tierBotY);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  // Bush — one or two low rounded blobs, no real trunk.
+  _drawBush(cx, cy, size, rand) {
+    const ctx = this.ctx;
+    const green = BUSH_GREENS[Math.floor(rand() * BUSH_GREENS.length)];
+    const r = size * 0.30;
+    ctx.fillStyle = green;
+    if (rand() < 0.5) {
+      ctx.beginPath();
+      ctx.arc(cx, cy + size * 0.12, r, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.beginPath();
+      ctx.arc(cx - r * 0.5, cy + size * 0.14, r * 0.85, 0, Math.PI * 2);
+      ctx.arc(cx + r * 0.5, cy + size * 0.14, r * 0.85, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
+    ctx.beginPath();
+    ctx.arc(cx + r * 0.45, cy + size * 0.16, r * 0.55, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  _drawStartDest() {
+    const ctx = this.ctx;
+    const s = this.cellPx;
+
+    // Start tile.
+    const start = this._cellRect(0, 0);
     ctx.save();
-    ctx.fillStyle = 'rgba(34, 197, 94, 0.28)';
-    ctx.fillRect(dx + 2, dy + 2, s - 4, s - 4);
-    ctx.strokeStyle = 'rgba(34, 197, 94, 0.9)';
+    ctx.fillStyle = 'rgba(37, 99, 235, 0.22)';
+    ctx.fillRect(start.x, start.y, s, s);
+    ctx.strokeStyle = 'rgba(37, 99, 235, 0.95)';
     ctx.lineWidth = 2;
-    ctx.strokeRect(dx + 2, dy + 2, s - 4, s - 4);
-    ctx.fillStyle = 'rgba(220, 252, 231, 0.95)';
-    ctx.font = `${Math.max(14, Math.floor(s * 0.42))}px ${fontStack()}`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('★', dx + s / 2, dy + s / 2);
-    ctx.font = `600 ${Math.max(8, Math.floor(s * 0.18))}px ${fontStack()}`;
+    ctx.strokeRect(start.x + 1, start.y + 1, s - 2, s - 2);
+    ctx.fillStyle = '#15307a';
+    ctx.font = `700 ${Math.max(7, Math.floor(s * 0.2))}px ${fontStack()}`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    ctx.fillText('DEST', dx + 5, dy + 5);
+    ctx.fillText('START', start.x + 3, start.y + 3);
+    ctx.restore();
+
+    // Destination tile.
+    const dest = this._cellRect(this.maze.dest.col, this.maze.dest.row);
+    ctx.save();
+    ctx.fillStyle = 'rgba(22, 163, 74, 0.32)';
+    ctx.fillRect(dest.x, dest.y, s, s);
+    ctx.strokeStyle = 'rgba(21, 128, 61, 0.95)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(dest.x + 1, dest.y + 1, s - 2, s - 2);
+    ctx.fillStyle = '#facc15';
+    ctx.font = `${Math.max(12, Math.floor(s * 0.5))}px ${fontStack()}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('★', dest.x + s / 2, dest.y + s / 2);
+    ctx.fillStyle = '#0f3d22';
+    ctx.font = `700 ${Math.max(7, Math.floor(s * 0.2))}px ${fontStack()}`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText('DEST', dest.x + 3, dest.y + 3);
     ctx.restore();
   }
 
@@ -558,26 +727,38 @@ export class Renderer {
 
   _resizeCanvas() {
     const { cols, rows } = this.maze;
-    const s = this.cellPx;
-    const wCss = cols * s;
-    const hCss = rows * s;
+    // Derive the wall-gap thickness from the road-cell size.
+    this.wallPx = Math.max(6, Math.round(this.cellPx * WALL_RATIO));
+    const wCss = this._slotX(2 * cols + 1);
+    const hCss = this._slotX(2 * rows + 1);
     this.canvas.style.width = wCss + 'px';
     this.canvas.style.height = hCss + 'px';
     this.canvas.width = Math.round(wCss * this.dpr);
     this.canvas.height = Math.round(hCss * this.dpr);
   }
 
-  _cellCenter(c, r) {
-    const s = this.cellPx;
-    return { x: c * s + s / 2, y: r * s + s / 2 };
+  // Slot model: the board is a strip of `wall, road, wall, road, …, road, wall`
+  // per axis. Even slot indices are wall gaps, odd indices are road cells.
+  // _slotX works for both axes since the layout is symmetric.
+  _slotX(slot) {
+    return Math.ceil(slot / 2) * this.wallPx + Math.floor(slot / 2) * this.cellPx;
+  }
+  _slotSize(slot) {
+    return slot % 2 === 0 ? this.wallPx : this.cellPx;
   }
 
-  _buildSeedTable(maze) {
-    // Reserved for future per-cell window seeds.
-    const rand = mulberry32((maze.seed | 0) ^ 0xA5A5A5A5);
-    const table = new Float32Array(maze.cols * maze.rows);
-    for (let i = 0; i < table.length; i++) table[i] = rand();
-    return table;
+  // Pixel rect of road cell (c, r) — that's slot (2c+1, 2r+1).
+  _cellRect(c, r) {
+    return {
+      x: this._slotX(2 * c + 1),
+      y: this._slotX(2 * r + 1),
+      size: this.cellPx,
+    };
+  }
+
+  _cellCenter(c, r) {
+    const rect = this._cellRect(c, r);
+    return { x: rect.x + rect.size / 2, y: rect.y + rect.size / 2 };
   }
 }
 

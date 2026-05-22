@@ -35,41 +35,46 @@
       <button id="generate-btn" class="btn btn-primary" type="button">Generate New Map</button>
     </section>
 
-    <div class="map-meta" id="map-meta" aria-live="polite"></div>
-
-    <div class="canvas-wrap">
-      <canvas id="city-canvas" aria-label="City grid"></canvas>
-      <div id="ripple" class="ripple" hidden></div>
-    </div>
-
-    <div class="attempt-row" aria-label="Attempts remaining">
-      <span class="attempt-dot" data-i="0"></span>
-      <span class="attempt-dot" data-i="1"></span>
-      <span class="attempt-dot" data-i="2"></span>
-      <span class="attempt-label" id="attempt-label">Attempt 1 of 3</span>
-    </div>
-
-    <div class="log-wrap">
-      <button id="inspect-btn" class="log-inspect-btn" type="button" aria-label="Inspect parsed instructions" title="Inspect parsed instructions">🔎</button>
-      <section class="log" id="driver-log" aria-live="polite" aria-label="Driver narration"></section>
-    </div>
-
-    <section class="dispatch" id="dispatch-block">
-      <div class="dispatch-head">
-        <span class="dispatch-title">📻 Dispatch</span>
-        <span class="dispatch-mode-tag" id="dispatch-mode-tag" hidden>SOLUTION</span>
-        <span class="char-count" id="char-count" aria-live="polite">0</span>
+    <div class="play-area">
+      <div class="map-col">
+        <div class="map-meta" id="map-meta" aria-live="polite"></div>
+        <div class="canvas-wrap">
+          <canvas id="city-canvas" aria-label="City grid"></canvas>
+          <div id="ripple" class="ripple" hidden></div>
+        </div>
       </div>
-      <textarea id="dispatch-input" rows="3" placeholder="Type your route here…" autocomplete="off"></textarea>
-      <button id="transmit-btn" class="btn btn-primary btn-wide" type="button">
-        <span class="btn-label">📻 TRANSMIT</span>
-        <span class="spinner" hidden></span>
-      </button>
-    </section>
 
-    <section class="lockout" id="lockout-block" hidden>
-      <p id="lockout-message">Route abandoned. Generate a new map to try again.</p>
-    </section>
+      <div class="side-col">
+        <div class="attempt-row" aria-label="Attempts remaining">
+          <span class="attempt-dot" data-i="0"></span>
+          <span class="attempt-dot" data-i="1"></span>
+          <span class="attempt-dot" data-i="2"></span>
+          <span class="attempt-label" id="attempt-label">Attempt 1 of 3</span>
+        </div>
+
+        <div class="log-wrap">
+          <button id="inspect-btn" class="log-inspect-btn" type="button" aria-label="Inspect parsed instructions" title="Inspect parsed instructions">🔎</button>
+          <section class="log" id="driver-log" aria-live="polite" aria-label="Driver narration"></section>
+        </div>
+
+        <section class="dispatch" id="dispatch-block">
+          <div class="dispatch-head">
+            <span class="dispatch-title">📻 Dispatch</span>
+            <span class="dispatch-mode-tag" id="dispatch-mode-tag" hidden>SOLUTION</span>
+            <span class="char-count" id="char-count" aria-live="polite">0</span>
+          </div>
+          <textarea id="dispatch-input" rows="3" placeholder="Type your route here…" autocomplete="off"></textarea>
+          <button id="transmit-btn" class="btn btn-primary btn-wide" type="button">
+            <span class="btn-label">📻 TRANSMIT</span>
+            <span class="spinner" hidden></span>
+          </button>
+        </section>
+
+        <section class="lockout" id="lockout-block" hidden>
+          <p id="lockout-message">Route abandoned. Generate a new map to try again.</p>
+        </section>
+      </div>
+    </div>
   </main>
 
   <div id="toast" class="toast" role="status" hidden></div>
