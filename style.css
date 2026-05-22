@@ -63,6 +63,21 @@ body {
   gap: 14px;
 }
 
+/* Play area — single stacked column on mobile, two columns on desktop. */
+.play-area {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.map-col,
+.side-col {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
 /* Controls */
 .controls-bar {
   display: flex;
@@ -600,5 +615,22 @@ body {
 
 @media (min-width: 768px) {
   .app-header h1 { font-size: 20px; }
-  .app-main { padding: 18px 16px 32px; gap: 16px; }
+  .app-main { padding: 18px 16px 32px; gap: 16px; max-width: 1100px; }
+
+  /* Two columns: map on the left, controls/play panel on the right.
+     align-items: stretch makes the side column match the map's height; the
+     dispatch/lockout panel then grows to fill the leftover space so its
+     bottom edge lines up with the bottom of the map. */
+  .play-area {
+    flex-direction: row;
+    align-items: stretch;
+    gap: 16px;
+  }
+  .map-col { flex: 1 1 0; }
+  .side-col { flex: 0 0 380px; }
+  /* Dispatch / lockout panel expands to fill the column. */
+  .side-col #dispatch-block,
+  .side-col #lockout-block { flex: 1 1 auto; }
+  /* The textarea grows with the panel so the writing area fills it. */
+  .side-col #dispatch-input { flex: 1 1 auto; }
 }
