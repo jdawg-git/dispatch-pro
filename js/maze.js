@@ -483,6 +483,22 @@ export function passageList(maze) {
   return out;
 }
 
+// Cells with 3+ open roads — the maze's real intersections (choice points).
+// A 2-passage cell is just a bend/curve and is NOT included. Returns compact
+// "(c,r)" strings for the Gemini prompt.
+export function intersectionList(maze) {
+  const out = [];
+  const { cols, rows, grid } = maze;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const cell = grid[r][c];
+      const open = (cell.n ? 1 : 0) + (cell.s ? 1 : 0) + (cell.e ? 1 : 0) + (cell.w ? 1 : 0);
+      if (open >= 3) out.push(`(${c},${r})`);
+    }
+  }
+  return out;
+}
+
 // Sanity check: every cell reachable from (0,0)? Used only in dev assertions.
 export function isFullyConnected(maze) {
   const { cols, rows, grid } = maze;

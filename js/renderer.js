@@ -501,6 +501,9 @@ export class Renderer {
     const x = this._slotX(sc), y = this._slotX(sr);
     const w = this._slotSize(sc), h = this._slotSize(sr);
     if (w < 2 || h < 2) return;
+    // Leave grass plain around START and DEST so trees/buildings don't
+    // crowd the labelled tiles or overhang their corners.
+    if (this._slotTouchesAnchor(sc, sr)) return;
     const seed = (hashString(`${sc}:${sr}:${kind}`) ^ (this.maze.seed | 0)) >>> 0;
     const rand = mulberry32(seed);
     const roll = rand();
@@ -516,6 +519,23 @@ export class Renderer {
     } else if (roll < 0.85) {
       this._drawPlant(cx, cy, Math.min(w, h) * 1.9, rand, 'wall');
     }
+  }
+
+  // True when the wall/corner slot (sc, sr) is adjacent to the START or DEST
+  // road cell — i.e. the slot's neighbours include that cell. Road cell (c, r)
+  // lives at slot (2c+1, 2r+1); any wall/corner slot within ±1 on each axis
+  // touches it.
+  _slotTouchesAnchor(sc, sr) {
+    const targets = [
+      { col: 0, row: 0 },
+      { col: this.maze.dest.col, row: this.maze.dest.row },
+    ];
+    for (const t of targets) {
+      const cellSc = 2 * t.col + 1;
+      const cellSr = 2 * t.row + 1;
+      if (Math.abs(sc - cellSc) <= 1 && Math.abs(sr - cellSr) <= 1) return true;
+    }
+    return false;
   }
 
   // Picks a plant type and draws it. Corner ('small') slots lean toward bushes;
@@ -602,7 +622,9 @@ export class Renderer {
       const frac = i / tiers;
       const tierTopY = top + (canopyBot - top) * frac * 0.85;
       const tierBotY = top + (canopyBot - top) * ((i + 1) / tiers);
-      const halfW = size * (0.18 + 0.22 * (1 - frac)); // wider at the bottom
+      // Wider at the BOTTOM — i grows top→bottom, so width grows with i too.
+      const widthFrac = i / Math.max(1, tiers - 1); // 0, .5, 1 for 3 tiers
+      const halfW = size * (0.16 + 0.28 * widthFrac);
       ctx.beginPath();
       ctx.moveTo(cx, tierTopY);
       ctx.lineTo(cx - halfW, tierBotY);
@@ -653,20 +675,28 @@ export class Renderer {
     ctx.fillText('START', start.x + 3, start.y + 3);
     ctx.restore();
 
-    // Destination tile.
+    // Destination tile — bold red border + warm gold fill + outlined star so
+    // it pops against the grass and surrounding scenery.
     const dest = this._cellRect(this.maze.dest.col, this.maze.dest.row);
     ctx.save();
-    ctx.fillStyle = 'rgba(22, 163, 74, 0.32)';
+    ctx.fillStyle = 'rgba(250, 204, 21, 0.45)';
     ctx.fillRect(dest.x, dest.y, s, s);
-    ctx.strokeStyle = 'rgba(21, 128, 61, 0.95)';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(dest.x + 1, dest.y + 1, s - 2, s - 2);
-    ctx.fillStyle = '#facc15';
-    ctx.font = `${Math.max(12, Math.floor(s * 0.5))}px ${fontStack()}`;
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#dc2626';
+    ctx.strokeRect(dest.x + 1.5, dest.y + 1.5, s - 3, s - 3);
+    // Star with a dark outline for legibility on any background.
+    const starSize = Math.max(14, Math.floor(s * 0.6));
+    ctx.font = `${starSize}px ${fontStack()}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
+    ctx.lineWidth = Math.max(2, starSize * 0.12);
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#7a2e0e';
+    ctx.strokeText('★', dest.x + s / 2, dest.y + s / 2);
+    ctx.fillStyle = '#facc15';
     ctx.fillText('★', dest.x + s / 2, dest.y + s / 2);
-    ctx.fillStyle = '#0f3d22';
+    // DEST label in dark red for contrast with the gold tint.
+    ctx.fillStyle = '#7a1d1d';
     ctx.font = `700 ${Math.max(7, Math.floor(s * 0.2))}px ${fontStack()}`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';

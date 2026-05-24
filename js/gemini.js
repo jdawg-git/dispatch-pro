@@ -3,12 +3,16 @@
 // are, what "driver's left" maps to) — this prompt deliberately never asks
 // the model for dx/dy or compass directions.
 
-import { passageList } from './maze.js';
+import { passageList, intersectionList } from './maze.js';
 
 export function buildPrompt(maze) {
   const { cols, rows, dest } = maze;
   const initialHeading = startHeadingName(maze);
   const passages = passageList(maze).join(', ');
+  const intersections = intersectionList(maze);
+  const intersectionsLine = intersections.length
+    ? intersections.join(', ')
+    : 'NONE — this maze is a single winding corridor with no choice points';
   return `You are a navigation interpreter for a city driving game called Dispatch Pro.
 The player is a dispatcher sending route instructions to a driver. Your only job is to translate the player's English instructions into a list of high-level driving actions.
 
@@ -18,6 +22,13 @@ GRID (for context only — do not emit coordinates)
 - ${cols} cols × ${rows} rows. Start (0,0). Destination (${dest.col},${dest.row}).
 - Driver starts facing ${initialHeading} (the only open road out of the start cell).
 - Open passages: ${passages}
+- Intersections (the ONLY real choice points): ${intersectionsLine}
+
+BEND vs INTERSECTION — read carefully
+- A BEND (curve) is a cell with exactly 2 open roads meeting at an angle. The road simply turns and the driver has NO choice. A bend is NOT an intersection. follow_road rolls through every bend automatically — the player never needs to call out a bend, and you must not treat one as a turn decision.
+- An INTERSECTION is a cell with 3 OR MORE open roads — listed above. It is the only place the driver has a real decision. Phrases like "turn left at the intersection", "at the next intersection", or "go to the intersection" refer ONLY to these listed cells.
+- If the player says "turn" but means a spot that is only a bend, they just mean "follow the road" — use follow_road, not a turn.
+- If the Intersections line says NONE, the entire route is one follow_road; never emit move_until "intersection".
 
 ACTION VOCABULARY — emit ONLY these:
 
@@ -26,13 +37,15 @@ ACTION VOCABULARY — emit ONLY these:
 
 { "type": "move_until", "target": "wall" | "intersection", "msg": string, "icon": string }
     "wall"         → drive forward until the next cell would be blocked, then stop.
-    "intersection" → drive forward until the current cell has 3+ open passages.
+    "intersection" → drive forward (rolling through any bends) until reaching a
+                     cell with 3+ open roads — one of the listed intersections.
+                     A bend/curve does NOT count and will not stop this action.
 
 { "type": "take_turn", "dir": "left" | "right", "msg": string, "icon": string }
     Drive forward (zero or more cells) until the driver's left/right side opens, then turn and roll one block into the new corridor. The driver commits to the turn — you do NOT need to emit a separate move action after.
 
 { "type": "follow_road", "msg": string, "icon": string }
-    Drive forward, automatically taking the only available turn at every bend. Stops at a real intersection (3+ open passages), at a dead end, or at the destination. Use this for "follow the road", "take every turn as it comes", "no choices to make, just drive", or any instruction telling the driver to keep going through a single corridor.
+    Drive forward, automatically rolling through every bend/curve (forced turns with no choice). Stops only at a real intersection (3+ open roads), a dead end, or the destination. Use this for "follow the road", "take every turn as it comes", "no choices to make, just drive", or any instruction telling the driver to keep going through a single corridor. Bends require no instruction at all — follow_road handles them.
 
 { "type": "turn", "dir": "left" | "right" | "around", "msg": string, "icon": string }
     Rotate the driver. If the new direction has an open passage at the current cell, the driver also rolls one block into it (so a turn at an intersection commits to the new corridor — you do NOT need a follow-up move action). Use this when the player is already at a turn or intersection.
