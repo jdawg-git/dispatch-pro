@@ -142,11 +142,21 @@ export function createGame({ renderer, els, showToast }) {
     if (result.success) {
       onSuccess();
     } else if (state.attemptsUsed >= MAX_ATTEMPTS) {
-      onLockout();
+      onLockout(result);
     } else {
-      onFailRetry();
+      onFailRetry(result);
     }
     renderAttemptDots();
+  }
+
+  // Maps the renderer's result object to a short human reason for the
+  // attempt-failed line. The renderer flags ranRed for red-light fails and
+  // sets hitWallAt for wall hits; everything else (incomplete route) means
+  // the action list ran out before reaching DEST.
+  function failReason(result) {
+    if (result?.ranRed) return 'ran a red light';
+    if (result?.hitWallAt) return 'turned off the road';
+    return 'ran out of directions';
   }
 
   function handleTransmitError(err) {
@@ -167,8 +177,13 @@ export function createGame({ renderer, els, showToast }) {
       'Route delivered. Generate a new map for another run.';
   }
 
-  function onFailRetry() {
-    setDriverMessage({ icon: '📻', msg: `Attempt ${state.attemptsUsed} failed — try again, dispatch.`, kind: 'fail' });
+  function onFailRetry(result) {
+    const reason = failReason(result);
+    setDriverMessage({
+      icon: '📻',
+      msg: `Attempt ${state.attemptsUsed} failed — ${reason}. Try again, dispatch.`,
+      kind: 'fail',
+    });
     setTransmitDisabled(true);
     appendTryAgain();
   }
@@ -193,10 +208,15 @@ export function createGame({ renderer, els, showToast }) {
     els.log.append(row);
   }
 
-  function onLockout() {
+  function onLockout(result) {
     state.lockedOut = true;
     state.mode = 'reveal';
-    setDriverMessage({ icon: '📡', msg: 'Out of attempts. Here is the route the dispatcher had in mind.', kind: 'fail' });
+    const reason = failReason(result);
+    setDriverMessage({
+      icon: '📡',
+      msg: `Out of attempts — ${reason} on the last one. Here is the route the dispatcher had in mind.`,
+      kind: 'fail',
+    });
 
     // Fill dispatch with the canonical English solution and lock the textarea.
     const english = state.maze?.solution?.english || '';
@@ -357,6 +377,8 @@ export function createGame({ renderer, els, showToast }) {
       case 'take_turn':   return `take_turn ${a.dir}`;
       case 'turn':        return `turn ${a.dir}`;
       case 'follow_road': return 'follow_road';
+      case 'wait_for_green': return 'wait_for_green';
+      case 'wait':        return 'wait';
       case 'say':         return 'say';
       default:            return a.type;
     }

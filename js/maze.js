@@ -17,6 +17,21 @@ const DIFFICULTY_P_STRAIGHT = {
   hard:   0.20,
 };
 
+// Traffic-light cycle, shared by every lit intersection. Tick advances once
+// per cell the car enters and once per `wait` action. Each light has its own
+// `offset` baked into the seed so they're out of phase.
+//
+// Cycle: RED → YELLOW (prep — get ready) → GREEN → RED → ...
+// Phases are 4 red / 2 yellow / 4 green = 10 ticks total.
+export const LIGHT_PATTERN = ['R', 'R', 'R', 'R', 'Y', 'Y', 'G', 'G', 'G', 'G'];
+export const LIGHT_PERIOD = LIGHT_PATTERN.length;
+
+export function lightColorAt(light, tick) {
+  const t = ((tick + light.offset) % LIGHT_PERIOD + LIGHT_PERIOD) % LIGHT_PERIOD;
+  return LIGHT_PATTERN[t];
+}
+
+
 export function mulberry32(seed) {
   let a = seed >>> 0;
   return function () {
@@ -95,9 +110,11 @@ export function generateMaze(cols, rows, seed, twistiness = 'medium') {
 
   const maze = { cols, rows, grid, seed, twistiness };
   maze.dest = farthestCellFromStart(maze);
-  // Precompute a canonical solution so the lockout state can offer "Watch the
-  // solution" without re-running BFS or calling Gemini.
+  // Precompute the canonical path BEFORE lights so chooseLitIntersections can
+  // target on-path intersections (guarantees the route always has lights to
+  // contend with at medium+ difficulty).
   const path = solutionPath(maze);
+  maze.lights = chooseLitIntersections(maze, twistiness, path);
   const startHeading = startHeadingDir(maze);
   const compiled = compileSolution(path, startHeading, maze);
   maze.solution = {
@@ -185,49 +202,73 @@ function relativeTurn(from, to) {
 // engine playback always agree.
 function compileSolution(path, startHeading, maze) {
   if (!path || path.length < 2) return { actions: [], english: '' };
-  const { grid } = maze;
+  const { grid, lights } = maze;
 
   const actions = [];
-  const chunks = []; // english chunks parallel to actions
+  const chunks = []; // english chunks (NOT 1:1 with actions — wait_for_green
+                     // chunks are placed in narrative order for readability)
 
-  // STEP 1 — initial alignment turn if needed.
+  // Simulated tick counter, mirroring the runtime: +1 per cell entered, plus
+  // tick advances inside wait_for_green when consumed. checkLightForEntry()
+  // inserts a wait_for_green action when the upcoming entry would land on a
+  // red/yellow light, and advances simTick to match what the runtime will do
+  // when it consumes the wait.
+  let simTick = 0;
+
+  // Whenever the next entry lands on a lit cell, insert a wait_for_green
+  // action — even if the light happens to be green at the arrival tick. The
+  // wait is a no-op in that case but ensures the reveal solution always
+  // teaches the "wait for the green" pattern when there are lights on the
+  // route. Returns true if a wait chunk should be emitted in narrative order.
+  const checkLightForEntry = (targetCell, cellsToReach) => {
+    if (!lights || lights.size === 0) return false;
+    const light = lights.get(`${targetCell.col},${targetCell.row}`);
+    if (!light) return false;
+    actions.push(makeWaitForGreen());
+    const arrivalPreTick = simTick + cellsToReach - 1;
+    let W = 0;
+    while (lightColorAt(light, arrivalPreTick + W) !== 'G' && W < LIGHT_PERIOD * 2) W++;
+    simTick += W;
+    return true;
+  };
+
+  // STEP 1 — initial alignment turn if needed. The engine auto-steps after a
+  // turn into the new corridor, so an alignment turn doubles as the "step into
+  // the first cell" action — no kickoff needed in this case.
   const firstDir = stepDir(path[0], path[1]);
-  if (firstDir !== startHeading) {
+  const didAlign = firstDir !== startHeading;
+  if (didAlign) {
+    const waited = checkLightForEntry(path[1], 1);
+    if (waited) chunks.push({ kind: 'wait_for_green' });
     const t = relativeTurn(startHeading, firstDir);
     actions.push(makeTurn(t));
     chunks.push({ kind: 'align', dir: t });
+    simTick += 1;
   }
 
-  // STEP 2 — if start cell has 2+ open passages, emit an explicit move 1 to
-  // disambiguate which corridor we're taking. follow_road can't decide at start
-  // because there's no "previous cell" to mark the inbound side.
-  let cursor = 0;
-  if (countOpen(grid[0][0]) >= 2) {
+  // STEP 2 — if (0,0) has 2+ open passages AND no alignment fired, emit a
+  // kickoff move so the next follow_road has a clean "back" direction.
+  let cursor = didAlign ? 1 : 0;
+  if (!didAlign && countOpen(grid[0][0]) >= 2) {
+    const waited = checkLightForEntry(path[1], 1);
+    if (waited) chunks.push({ kind: 'wait_for_green' });
     actions.push(makeMove(1));
     chunks.push({ kind: 'kickoff' });
+    simTick += 1;
     cursor = 1;
   }
 
-  // STEP 3 — walk the rest of the path, segmenting at real intersections
-  // (cells with 3+ open passages where the player has a genuine choice).
-  //
-  // follow_road has two hard rules baked into the renderer:
-  //   1. It can't START at a cell with 2+ forward options (an intersection).
-  //   2. It stops the moment it ARRIVES at such a cell.
-  // So every intersection along the path must be handled as
-  //   [follow_road → intersection] + [turn] + [move 1 to push past].
-  // Back-to-back intersections require multiple turn+cross pairs in a row.
+  // STEP 3 — walk the rest of the path, segmenting at real intersections.
   while (cursor < path.length - 1) {
     const here = grid[path[cursor].row][path[cursor].col];
     if (cursor > 0 && countOpen(here) >= 3) {
-      // We're standing on an intersection. If the canonical path turns here,
-      // emit a turn action — the engine auto-steps into the new corridor after
-      // rotation, so no explicit move 1 is needed. If the canonical path
-      // continues straight through, the engine has no turn to trigger the
-      // auto-step, so emit move 1 explicitly to push past.
+      // Standing on an intersection — turn (with auto-step) or push straight.
       const arrivalDir = stepDir(path[cursor - 1], path[cursor]);
       const nextDir = stepDir(path[cursor], path[cursor + 1]);
       const t = relativeTurn(arrivalDir, nextDir);
+      const targetCell = path[cursor + 1];
+      const waited = checkLightForEntry(targetCell, 1);
+      if (waited) chunks.push({ kind: 'wait_for_green' });
       if (t) {
         actions.push(makeTurn(t));
         chunks.push({ kind: 'turn_at_intersection', dir: t });
@@ -235,27 +276,34 @@ function compileSolution(path, startHeading, maze) {
         actions.push(makeMove(1));
         chunks.push({ kind: 'straight_through_intersection' });
       }
+      simTick += 1;
       cursor++;
       continue;
     }
 
-    // Otherwise walk forward until the next intersection on the path or dest.
+    // Otherwise walk forward until the next intersection or dest.
     let runEnd = cursor + 1;
     while (runEnd < path.length - 1) {
       const cell = grid[path[runEnd].row][path[runEnd].col];
       if (countOpen(cell) >= 3) break;
       runEnd++;
     }
-    const runLen = runEnd - cursor;
-    // Always use follow_road for inter-intersection runs — it auto-adjusts
-    // heading at forced bends. Using `move N` here would drive in the current
-    // heading and crash into a wall the moment the corridor bends.
+    const cellsInRun = runEnd - cursor;
+    // Lights only sit on intersections; intermediate corridor cells are bends
+    // and never lit. So only the LAST cell of a follow_road run can trigger a
+    // light check, and only when it stops at an intersection (not at dest).
+    let waited = false;
+    if (runEnd < path.length - 1) {
+      waited = checkLightForEntry(path[runEnd], cellsInRun);
+    }
     actions.push(makeFollowRoad());
     chunks.push({
       kind: 'follow_road',
-      count: runLen,
+      count: cellsInRun,
       toDest: runEnd === path.length - 1,
     });
+    if (waited) chunks.push({ kind: 'wait_for_green' });
+    simTick += cellsInRun;
     cursor = runEnd;
   }
 
@@ -286,6 +334,13 @@ function makeFollowRoad() {
     icon: '🛣️',
   };
 }
+function makeWaitForGreen() {
+  return {
+    type: 'wait_for_green',
+    msg: 'Holding for the green.',
+    icon: '🚦',
+  };
+}
 function turnMsg(t) {
   if (t === 'left')  return 'Hanging a left.';
   if (t === 'right') return 'Easy right.';
@@ -313,10 +368,12 @@ function composeEnglish(chunks, seed) {
   const rand = mulberry32((seed | 0) ^ 0x9E3779B1);
   const pick = (arr) => arr[Math.floor(rand() * arr.length)];
 
-  const visible = chunks.filter((c) =>
-    c.kind !== 'cross_intersection' &&
-    c.kind !== 'straight_through_intersection'
-  );
+  // cross_intersection is engine-only bookkeeping (the implicit move 1 the
+  // engine auto-issues after a turn at an intersection) — it produces no
+  // narrative text. straight_through_intersection IS rendered so the player
+  // (and any LLM reading the canned text) knows to emit a cross when the
+  // canonical path goes straight through an intersection without turning.
+  const visible = chunks.filter((c) => c.kind !== 'cross_intersection');
   if (!visible.length) return '';
 
   // Group into sentences. A sentence ends after a turn-style chunk so the
@@ -411,6 +468,13 @@ function renderChunk(c, ctx) {
     case 'straight_through_intersection': {
       return pick(['continue straight through', 'roll straight through']);
     }
+    case 'wait_for_green': {
+      return pick([
+        'wait for the green light',
+        'hold for the green',
+        'wait at the light',
+      ]);
+    }
     case 'cross_intersection': {
       // "move 1" to step past the intersection cell. We usually fold this into
       // the previous turn/straight phrase, but render it explicitly when nothing
@@ -481,6 +545,68 @@ export function passageList(maze) {
     }
   }
   return out;
+}
+
+// Picks which intersections on the canonical path get traffic lights.
+//
+// Easy   → no lights.
+// Medium → ratio 2/3 of route intersections (min 1 when any exist).
+// Hard   → ratio 3/4 of route intersections (min 1 when any exist).
+//
+// "Route intersections" means cells with 3+ open passages that the canonical
+// solution traverses. Lights on off-path intersections wouldn't affect
+// gameplay, so we leave those clear.
+//
+// Each lit intersection gets a phase `offset` baked in from the seed so
+// different lights cycle out of phase. Returns Map<"c,r", { col, row, offset }>.
+export function chooseLitIntersections(maze, twistiness, path) {
+  const lights = new Map();
+  if (twistiness === 'easy') return lights;
+  if (!path || path.length === 0) return lights;
+
+  // Intersections on the canonical path, preserving path order.
+  const { grid } = maze;
+  const seen = new Set();
+  const onPath = [];
+  for (const { col, row } of path) {
+    const key = `${col},${row}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const cell = grid[row][col];
+    const open = (cell.n ? 1 : 0) + (cell.s ? 1 : 0) + (cell.e ? 1 : 0) + (cell.w ? 1 : 0);
+    if (open >= 3) onPath.push({ col, row });
+  }
+  if (onPath.length === 0) return lights;
+
+  // Target count: guarantee at least 1, scale by difficulty ratio.
+  const ratio = twistiness === 'hard' ? 0.75 : 2 / 3;
+  const target = Math.max(1, Math.round(onPath.length * ratio));
+
+  // Deterministic Fisher–Yates shuffle so light placement varies across the
+  // route but stays reproducible per seed.
+  const rand = mulberry32(((maze.seed | 0) ^ 0x1A5B7C9D) >>> 0);
+  const order = onPath.slice();
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+
+  for (let i = 0; i < target && i < order.length; i++) {
+    const { col, row } = order[i];
+    const offsetSeed = (hashStr(`light:${col},${row}`) ^ (maze.seed | 0)) >>> 0;
+    const offset = Math.floor(mulberry32(offsetSeed)() * LIGHT_PERIOD);
+    lights.set(`${col},${row}`, { col, row, offset });
+  }
+  return lights;
+}
+
+function hashStr(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
 }
 
 // Cells with 3+ open roads — the maze's real intersections (choice points).

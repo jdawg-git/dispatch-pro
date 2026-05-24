@@ -3,7 +3,7 @@
 // Owns the canvas, the current maze, and the car's position. game.js drives it
 // via animateSteps(steps, onMsg, onDone).
 
-import { mulberry32 } from './maze.js';
+import { mulberry32, lightColorAt } from './maze.js';
 
 // Bright daytime palette for the maze canvas (the surrounding app UI stays dark).
 const GRASS = '#86bf52';
@@ -28,6 +28,8 @@ const WALL_RATIO = 0.42;
 const STEP_MS = 380;        // per-step animation duration (slower so the player can read each line)
 const RESET_MS = 420;       // duration of return-to-start animation on fail
 const READ_MS = 600;        // pause after each driver line so the player can read it before the car moves
+const LIGHT_TICK_MS = 320;  // visible delay between ticks while a wait-for-green is being consumed
+const LIGHT_TICK_SAFETY = 24; // upper bound on ticks consumed during a single wait (~3 cycles)
 
 // Headings (where the car is pointing)
 export const HEADING = {
@@ -55,6 +57,8 @@ export class Renderer {
     this.car = { col: 0, row: 0, heading: startHeading };
     const start = this._cellCenter(0, 0);
     this._displayCar = { x: start.x, y: start.y, heading: startHeading };
+    this._tick = 0;
+    this._pendingWait = false;
     this.render();
   }
 
@@ -101,15 +105,19 @@ export class Renderer {
   async animateActions(actions, onMsg) {
     if (!this.maze) throw new Error('no maze');
     this._aborted = false;
-    const { grid, dest } = this.maze;
+    this._tick = 0;
+    this._pendingWait = false;
+    const { grid, dest, lights } = this.maze;
 
     let col = this.car.col;
     let row = this.car.row;
     let dir = headingToDir(this.car.heading);
-    // Track the cell we were in immediately before arriving at (col, row).
-    // Needed because after a `turn` action the heading changes but we haven't
-    // moved — so reverseOf(heading) no longer points to where we came from.
     let prevCol = -1, prevRow = -1;
+    // Lookahead bookkeeping — when an upcoming lit cell needs a wait and one
+    // hasn't been queued yet, we may claim a wait_for_green from later in the
+    // action list. Those indices get skipped when the for-loop reaches them.
+    const skipIndices = new Set();
+    let actionIndex = 0;
 
     const backDirFromPrev = () => {
       if (prevCol < 0) return null;
@@ -125,14 +133,48 @@ export class Renderer {
       this.car.col = col; this.car.row = row; this.car.heading = dirToHeading(dir);
       return { success: false, hitWallAt: { col, row, dir } };
     };
+    const failRed = () => {
+      onMsg?.({ icon: '🛑', msg: 'Ran a red — that\'s a busted attempt.', kind: 'fail' });
+      this.car.col = col; this.car.row = row; this.car.heading = dirToHeading(dir);
+      return { success: false, ranRed: true };
+    };
     const atDest = () => col === dest.col && row === dest.row;
     const reachedDest = () => {
       this.car.col = col; this.car.row = row; this.car.heading = dirToHeading(dir);
       return { success: true, hitWallAt: null };
     };
 
-    for (const action of actions) {
+    // Centralised per-cell advance: red-light check (consuming pendingWait or
+    // claiming a future wait_for_green if available), then tween into the
+    // target cell, then tick++. Returns null on red-light fail.
+    const advanceOne = async (fromCol, fromRow, intoDir) => {
+      const [tc, tr] = stepCell(fromCol, fromRow, intoDir);
+      let ok = await this._consumeLightAt(tc, tr, onMsg);
+      if (!ok) {
+        // Engine forgiveness: the player included a wait_for_green further
+        // down the action list (natural English order — "drive to the
+        // intersection, wait for the green, then turn"). Claim it now.
+        for (let j = actionIndex + 1; j < actions.length; j++) {
+          if (skipIndices.has(j)) continue;
+          if (actions[j].type === 'wait_for_green') {
+            skipIndices.add(j);
+            this._pendingWait = true;
+            ok = await this._consumeLightAt(tc, tr, onMsg);
+            break;
+          }
+        }
+      }
+      if (!ok) return null;
+      await this._tweenStep(fromCol, fromRow, intoDir);
+      this._tick += 1;
+      this.render();
+      return { tc, tr };
+    };
+
+    for (actionIndex = 0; actionIndex < actions.length; actionIndex++) {
       if (this._aborted) break;
+      if (skipIndices.has(actionIndex)) continue; // already claimed by a lookahead
+      const action = actions[actionIndex];
       const { msg = '', icon = '🚗' } = action;
       onMsg?.({ icon, msg, kind: 'info' });
       // Give the player a beat to read the new line before the car moves.
@@ -145,55 +187,72 @@ export class Renderer {
           for (let i = 0; i < n; i++) {
             if (this._aborted) break;
             if (!grid[row][col][dir]) return failWall();
+            const r = await advanceOne(col, row, dir);
+            if (!r) return failRed();
             prevCol = col; prevRow = row;
-            await this._tweenStep(col, row, dir);
-            [col, row] = stepCell(col, row, dir);
+            col = r.tc; row = r.tr;
             if (atDest()) return reachedDest();
           }
           break;
         }
 
         case 'move_until': {
-          // Graceful: stop at wall even if the named target was never found.
+          // Follow the corridor (handling bends like follow_road does) and
+          // stop when the named target is reached. Without bend-following,
+          // "drive to the next intersection" would crash at the first curve
+          // in a bendy corridor between two intersections.
           let safety = 0;
           while (safety++ < 200) {
             if (this._aborted) break;
             if (action.target === 'intersection' && countOpen(grid[row][col]) >= 3) break;
-            if (!grid[row][col][dir]) break;
+            const cell = grid[row][col];
+            const back = backDirFromPrev();
+            const openDirs = ['n','s','e','w'].filter(d => cell[d]);
+            const forwardOptions = back ? openDirs.filter(d => d !== back) : openDirs;
+            // No forward options = dead end (or wall). For target=wall this is
+            // the intended stop; for intersection we never found one. Either
+            // way, stop gracefully.
+            if (forwardOptions.length === 0) break;
+            // Multiple forward options = at an intersection. For
+            // target=intersection we'd have broken above; for target=wall
+            // stop here (the player asked to go to a wall, not a fork).
+            if (forwardOptions.length >= 2) break;
+            const nextDir = forwardOptions[0];
+            if (nextDir !== dir) {
+              dir = nextDir;
+              await this._rotateTo(col, row, dir);
+            }
+            const r = await advanceOne(col, row, dir);
+            if (!r) return failRed();
             prevCol = col; prevRow = row;
-            await this._tweenStep(col, row, dir);
-            [col, row] = stepCell(col, row, dir);
+            col = r.tc; row = r.tr;
             if (atDest()) return reachedDest();
           }
           break;
         }
 
         case 'take_turn': {
-          // Graceful: if the requested side never opens before the corridor
-          // ends, stop at the wall. We still rotate to face the side if we
-          // did find an opening; otherwise leave heading alone.
           const sideFor = (d) => action.dir === 'left' ? leftOf(d) : rightOf(d);
           let safety = 0;
           let sideOpen = grid[row][col][sideFor(dir)];
           while (!sideOpen && safety++ < 200) {
             if (this._aborted) break;
-            if (!grid[row][col][dir]) break; // wall — no turn found
+            if (!grid[row][col][dir]) break;
+            const r = await advanceOne(col, row, dir);
+            if (!r) return failRed();
             prevCol = col; prevRow = row;
-            await this._tweenStep(col, row, dir);
-            [col, row] = stepCell(col, row, dir);
+            col = r.tc; row = r.tr;
             if (atDest()) return reachedDest();
             sideOpen = grid[row][col][sideFor(dir)];
           }
           if (sideOpen) {
             dir = sideFor(dir);
             await this._rotateTo(col, row, dir);
-            // Auto-step into the new corridor. Without this, a follow_road or
-            // turn at an intersection would never get past it (forward
-            // options >= 2 → stop). Taking a turn means committing to it.
             if (grid[row][col][dir]) {
+              const r = await advanceOne(col, row, dir);
+              if (!r) return failRed();
               prevCol = col; prevRow = row;
-              await this._tweenStep(col, row, dir);
-              [col, row] = stepCell(col, row, dir);
+              col = r.tc; row = r.tr;
               if (atDest()) return reachedDest();
             }
           }
@@ -205,26 +264,36 @@ export class Renderer {
           else if (action.dir === 'right') dir = rightOf(dir);
           else if (action.dir === 'around') dir = reverseOf(dir);
           await this._rotateTo(col, row, dir);
-          // Auto-step into the new direction if it has an open passage. Same
-          // reason as take_turn — a turn at an intersection has to commit.
           if (grid[row][col][dir]) {
+            const r = await advanceOne(col, row, dir);
+            if (!r) return failRed();
             prevCol = col; prevRow = row;
-            await this._tweenStep(col, row, dir);
-            [col, row] = stepCell(col, row, dir);
+            col = r.tc; row = r.tr;
             if (atDest()) return reachedDest();
           }
           break;
         }
 
+        case 'wait_for_green': {
+          // Sets a token consumed at the next lit-cell entry. The actual hold
+          // animation happens inside _consumeLightAt so the player sees the
+          // signal cycle as the driver waits.
+          this._pendingWait = true;
+          break;
+        }
+
+        case 'wait': {
+          // Single-tick wait — advance time without moving.
+          this._tick += 1;
+          this.render();
+          await this._wait(READ_MS);
+          break;
+        }
+
         case 'say':
-          // Pure narration — no movement.
           break;
 
         case 'follow_road': {
-          // Drive forward, automatically taking the only available turn at
-          // every bend. Stops at a real "must choose" intersection, at a dead
-          // end, or at DEST. "Back" is the actual previous cell (not just
-          // reverseOf(heading)), so this works correctly after a turn.
           let safety = 0;
           while (safety++ < 400) {
             if (this._aborted) break;
@@ -233,22 +302,18 @@ export class Renderer {
             const openDirs = ['n','s','e','w'].filter(d => cell[d]);
             const forwardOptions = back ? openDirs.filter(d => d !== back) : openDirs;
 
-            if (forwardOptions.length === 0) {
-              // Truly stuck (dead-end branch).
-              return failWall();
-            }
-            if (forwardOptions.length >= 2) {
-              // Real choice — stop and let the player decide.
-              break;
-            }
+            if (forwardOptions.length === 0) return failWall();
+            if (forwardOptions.length >= 2) break;
+
             const nextDir = forwardOptions[0];
             if (nextDir !== dir) {
               dir = nextDir;
               await this._rotateTo(col, row, dir);
             }
+            const r = await advanceOne(col, row, dir);
+            if (!r) return failRed();
             prevCol = col; prevRow = row;
-            await this._tweenStep(col, row, dir);
-            [col, row] = stepCell(col, row, dir);
+            col = r.tc; row = r.tr;
             if (atDest()) return reachedDest();
           }
           break;
@@ -261,6 +326,33 @@ export class Renderer {
     if (this._aborted) return { success: false, aborted: true };
     this.car.col = col; this.car.row = row; this.car.heading = dirToHeading(dir);
     return { success: atDest(), hitWallAt: null };
+  }
+
+  // Red-light enforcement. If the target cell is lit and not currently green,
+  // either consume a pending wait token (advancing ticks visibly until the
+  // light turns green) or fail the attempt. Returns true if the car may enter.
+  async _consumeLightAt(targetCol, targetRow, onMsg) {
+    const lights = this.maze?.lights;
+    if (!lights || lights.size === 0) return true;
+    const light = lights.get(`${targetCol},${targetRow}`);
+    if (!light) return true;
+    let color = lightColorAt(light, this._tick);
+    if (color === 'G') return true;
+    if (!this._pendingWait) return false;
+    // Show the hold visually: advance one tick at a time, re-render so the
+    // signal's circles cycle, pause briefly between ticks.
+    onMsg?.({ icon: '🚦', msg: 'Holding for the green light...', kind: 'info' });
+    let safety = 0;
+    while (color !== 'G' && safety++ < LIGHT_TICK_SAFETY) {
+      if (this._aborted) return true;
+      this._tick += 1;
+      this.render();
+      await this._wait(LIGHT_TICK_MS);
+      color = lightColorAt(light, this._tick);
+    }
+    this._pendingWait = false;
+    onMsg?.({ icon: '✅', msg: 'Green. Rolling.', kind: 'info' });
+    return true;
   }
 
   _tweenStep(col, row, dir) {
@@ -403,6 +495,8 @@ export class Renderer {
     this._drawScenery();
     // Start + destination overlays.
     this._drawStartDest();
+    // Traffic lights at lit intersections.
+    this._drawLights();
     // Car (drawn last so it is on top).
     this._drawCar();
 
@@ -702,6 +796,52 @@ export class Renderer {
     ctx.textBaseline = 'top';
     ctx.fillText('DEST', dest.x + 3, dest.y + 3);
     ctx.restore();
+  }
+
+  // Small traffic-light fixture in the corner of each lit intersection cell.
+  // Three vertical circles: red top, yellow middle, green bottom. The circle
+  // matching the current phase glows bright; the others dim.
+  _drawLights() {
+    const lights = this.maze?.lights;
+    if (!lights || lights.size === 0) return;
+    const ctx = this.ctx;
+    const s = this.cellPx;
+    const tick = this._tick | 0;
+    const fixW = Math.max(8, s * 0.22);
+    const fixH = Math.max(18, s * 0.52);
+    const pad = Math.max(2, s * 0.06);
+    const cr = Math.max(2, fixW * 0.30);
+
+    for (const light of lights.values()) {
+      const rect = this._cellRect(light.col, light.row);
+      // Centered in the intersection cell — the car drives past it.
+      const fx = rect.x + (s - fixW) / 2;
+      const fy = rect.y + (s - fixH) / 2;
+      // Fixture body — dark rounded rect.
+      ctx.fillStyle = '#1f2937';
+      roundRect(ctx, fx, fy, fixW, fixH, 2);
+      ctx.fill();
+      // Subtle highlight on the left edge (suggests a metal post / housing).
+      ctx.fillStyle = 'rgba(255,255,255,0.08)';
+      ctx.fillRect(fx + 1, fy + 1, 1, fixH - 2);
+
+      const color = lightColorAt(light, tick);
+      const cx = fx + fixW / 2;
+      const cyR = fy + fixH * 0.20;
+      const cyY = fy + fixH * 0.50;
+      const cyG = fy + fixH * 0.80;
+      this._drawLightCircle(cx, cyR, cr, color === 'R' ? '#ef4444' : '#4a1f22');
+      this._drawLightCircle(cx, cyY, cr, color === 'Y' ? '#facc15' : '#4a431a');
+      this._drawLightCircle(cx, cyG, cr, color === 'G' ? '#22c55e' : '#1a4a2c');
+    }
+  }
+
+  _drawLightCircle(cx, cy, r, fill) {
+    const ctx = this.ctx;
+    ctx.fillStyle = fill;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   _drawCar() {

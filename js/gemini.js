@@ -13,6 +13,9 @@ export function buildPrompt(maze) {
   const intersectionsLine = intersections.length
     ? intersections.join(', ')
     : 'NONE — this maze is a single winding corridor with no choice points';
+  const litCells = maze.lights && maze.lights.size
+    ? [...maze.lights.values()].map(l => `(${l.col},${l.row})`).join(', ')
+    : 'NONE';
   return `You are a navigation interpreter for a city driving game called Dispatch Pro.
 The player is a dispatcher sending route instructions to a driver. Your only job is to translate the player's English instructions into a list of high-level driving actions.
 
@@ -23,12 +26,19 @@ GRID (for context only — do not emit coordinates)
 - Driver starts facing ${initialHeading} (the only open road out of the start cell).
 - Open passages: ${passages}
 - Intersections (the ONLY real choice points): ${intersectionsLine}
+- Lit intersections (traffic lights — must wait for green): ${litCells}
 
 BEND vs INTERSECTION — read carefully
 - A BEND (curve) is a cell with exactly 2 open roads meeting at an angle. The road simply turns and the driver has NO choice. A bend is NOT an intersection. follow_road rolls through every bend automatically — the player never needs to call out a bend, and you must not treat one as a turn decision.
 - An INTERSECTION is a cell with 3 OR MORE open roads — listed above. It is the only place the driver has a real decision. Phrases like "turn left at the intersection", "at the next intersection", or "go to the intersection" refer ONLY to these listed cells.
 - If the player says "turn" but means a spot that is only a bend, they just mean "follow the road" — use follow_road, not a turn.
 - If the Intersections line says NONE, the entire route is one follow_road; never emit move_until "intersection".
+
+INTERSECTION-ANCHORED vs NEXT-LEFT-RIGHT TURNS — decisive rule
+This is the single most common mistake. Read it twice.
+- When the player anchors the turn to an INTERSECTION ("at the intersection", "at the next intersection", "go to the intersection and turn left", "drive there and turn right") you MUST emit two actions: first { "type":"move_until","target":"intersection", ... }, then { "type":"turn", "dir": ..., ... }. NEVER use take_turn for this case.
+- Only use take_turn when the player says "the next left/right" / "find a left" / "at the next opening" / "at the next corner" WITHOUT anchoring to an intersection. take_turn grabs the FIRST cell where the named side opens, INCLUDING BENDS — that's wrong for "at the intersection" because bends usually come up first along a corridor and the car would turn at the wrong cell.
+- If the word "intersection" appears anywhere in the player's instruction before a turn direction, you MUST use move_until intersection + turn. Repeat: never take_turn when "intersection" is present.
 
 ACTION VOCABULARY — emit ONLY these:
 
@@ -42,13 +52,24 @@ ACTION VOCABULARY — emit ONLY these:
                      A bend/curve does NOT count and will not stop this action.
 
 { "type": "take_turn", "dir": "left" | "right", "msg": string, "icon": string }
-    Drive forward (zero or more cells) until the driver's left/right side opens, then turn and roll one block into the new corridor. The driver commits to the turn — you do NOT need to emit a separate move action after.
+    Drive forward and turn at the FIRST cell where the driver's left/right opens — that includes BENDS, not just intersections. Use this ONLY for phrases like "take the next left", "find a left and take it", "at the next opening, turn right" — never when the player anchors the turn to "the intersection". If the player said "intersection", use move_until intersection + turn instead.
 
 { "type": "follow_road", "msg": string, "icon": string }
     Drive forward, automatically rolling through every bend/curve (forced turns with no choice). Stops only at a real intersection (3+ open roads), a dead end, or the destination. Use this for "follow the road", "take every turn as it comes", "no choices to make, just drive", or any instruction telling the driver to keep going through a single corridor. Bends require no instruction at all — follow_road handles them.
 
 { "type": "turn", "dir": "left" | "right" | "around", "msg": string, "icon": string }
     Rotate the driver. If the new direction has an open passage at the current cell, the driver also rolls one block into it (so a turn at an intersection commits to the new corridor — you do NOT need a follow-up move action). Use this when the player is already at a turn or intersection.
+
+{ "type": "wait_for_green", "msg": string, "icon": string }
+    Hold at the next lit intersection until its traffic light turns green, then
+    continue. Use when the player says "wait for the green light", "stop at the
+    light", "hold at the light", or similar. Emit ONE wait_for_green per lit
+    intersection along the route — the engine consumes it at the next light
+    the driver reaches.
+
+{ "type": "wait", "msg": string, "icon": string }
+    Pause for a single tick without moving. Rarely needed — use only when the
+    player explicitly says "wait a beat" or "hold a sec".
 
 { "type": "say", "msg": string, "icon": string }
     Pure narration with no movement. Use sparingly for flavour.
@@ -59,13 +80,24 @@ CRITICAL
 - Never invent cell coordinates.
 - If the player tells the driver to "take a turn" / "take the next turn" / "take N turns" WITHOUT specifying left or right, use { "type":"follow_road", ... } — never guess a direction. follow_road handles every bend in a single corridor.
 - Likewise, if the player references "the intersection" or "the next intersection" but the passage list shows no cell with 3+ open passages, prefer { "type":"follow_road", ... } over { "type":"move_until", "target":"intersection", ... }. follow_road will drive to the destination through every bend.
+- HARD RULE: if the word "intersection" appears in the player's instruction before a turn direction, you MUST emit { "type":"move_until","target":"intersection",...} then { "type":"turn", "dir": ..., ... }. NEVER emit take_turn in that case. take_turn would grab the first bend with that side open and turn at the wrong cell.
+- TRAFFIC LIGHTS: if the player tells the driver to wait at a light or "wait for the green", emit a wait_for_green action BEFORE the action that arrives at that lit intersection. If the player does NOT mention waiting and the route passes through a lit intersection, do NOT silently insert wait_for_green — running a red is a player-visible mistake and the puzzle. (Easy mazes have no lights at all.)
 
 INSTRUCTION → ACTION EXAMPLES
 - "Go straight 3" → [{ "type":"move", "count":3, ... }]
 - "Drive until the wall" → [{ "type":"move_until", "target":"wall", ... }]
 - "Take the next left" → [{ "type":"take_turn", "dir":"left", ... }]
 - "Take 3 lefts at turns" → three { "type":"take_turn", "dir":"left", ... } actions in a row.
-- "Go to the next intersection and turn right" → [{ "type":"move_until","target":"intersection",...}, { "type":"turn", "dir":"right",...}]
+
+INTERSECTION-ANCHORED vs NEXT-LEFT CONTRAST (memorise this)
+- "Drive to the next intersection and turn left" → [{ "type":"move_until","target":"intersection",...}, { "type":"turn", "dir":"left",...}]   ← NOT take_turn
+- "Go to the intersection, then take a left"     → [{ "type":"move_until","target":"intersection",...}, { "type":"turn", "dir":"left",...}]   ← NOT take_turn
+- "At the next intersection, hang a right"        → [{ "type":"move_until","target":"intersection",...}, { "type":"turn", "dir":"right",...}]  ← NOT take_turn
+- "Take the next left"                            → [{ "type":"take_turn", "dir":"left", ... }]
+- "Find a left and take it"                       → [{ "type":"take_turn", "dir":"left", ... }]
+- "At the next opening, turn right"               → [{ "type":"take_turn", "dir":"right", ... }]
+
+More examples
 - "Left at the next, then right, then drive to the end" → [
     { "type":"take_turn", "dir":"left", ... },
     { "type":"take_turn", "dir":"right", ... },
@@ -73,6 +105,9 @@ INSTRUCTION → ACTION EXAMPLES
   ]
 - "Just drive — take every turn as it comes" / "follow the road" / "no choices, just go" → [{ "type":"follow_road", ... }]
 - Plain "drive to the destination" with no other hints → [{ "type":"follow_road", ... }] (the engine will reach the star if the route is unambiguous, or stop at the first real intersection so you can guide further).
+- "Go to the next intersection, wait for the green, then turn left" → [{ "type":"move_until","target":"intersection",...}, { "type":"wait_for_green",...}, { "type":"turn", "dir":"left",...}]
+- "Follow the road, hold for the green, then take a right" → [{ "type":"follow_road",...}, { "type":"wait_for_green",...}, { "type":"turn", "dir":"right",...}]
+- "Continue straight through" / "Go straight through the intersection" / "Roll straight through" → [{ "type":"move", "count":1, ... }] (a single forward step that crosses the intersection cell — needed because follow_road STOPS at intersections; if the canonical route goes straight through one without turning, the driver still needs an explicit cross step).
 
 DRIVER PERSONA (use this voice for every "msg")
 - Salty veteran city cabbie on the radio. Calm under pressure, a bit world-weary, deadpan, dry.
@@ -148,7 +183,7 @@ export async function transmit(userText, maze) {
   return { actions };
 }
 
-const VALID_TYPES = new Set(['move', 'move_until', 'take_turn', 'turn', 'say', 'follow_road']);
+const VALID_TYPES = new Set(['move', 'move_until', 'take_turn', 'turn', 'say', 'follow_road', 'wait_for_green', 'wait']);
 const VALID_TARGETS = new Set(['wall', 'intersection']);
 const VALID_TURN_DIRS = new Set(['left', 'right', 'around']);
 const VALID_TAKE_DIRS = new Set(['left', 'right']);
@@ -194,6 +229,10 @@ export function parseActionsFromReply(text) {
     } else if (type === 'say') {
       out.push({ type, msg, icon });
     } else if (type === 'follow_road') {
+      out.push({ type, msg, icon });
+    } else if (type === 'wait_for_green') {
+      out.push({ type, msg, icon });
+    } else if (type === 'wait') {
       out.push({ type, msg, icon });
     }
   }
