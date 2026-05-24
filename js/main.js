@@ -58,11 +58,16 @@ function updateMapMeta(maze) {
     }
   }
   const path = maze.dest.distance;
-  els.mapMeta.innerHTML =
+  const lights = maze.lights ? maze.lights.size : 0;
+  let html =
     `Path: <strong>${path}</strong> cells &middot; ` +
     `<strong>${intersections}</strong> intersection${intersections === 1 ? '' : 's'} &middot; ` +
     `<strong>${bends}</strong> bends &middot; ` +
     `<strong>${deadEnds}</strong> dead end${deadEnds === 1 ? '' : 's'}`;
+  if (lights > 0) {
+    html += ` &middot; <strong>${lights}</strong> traffic light${lights === 1 ? '' : 's'} 🚦`;
+  }
+  els.mapMeta.innerHTML = html;
 }
 
 els.generateBtn.addEventListener('click', resetMap);
