@@ -52,6 +52,14 @@ body {
   font-weight: 700;
 }
 
+.app-logo {
+  display: block;
+  margin: 0 auto;
+  width: 254px;   /* 50% of the source 508×190 image */
+  height: auto;
+  image-rendering: -webkit-optimize-contrast;
+}
+
 .app-main {
   flex: 1;
   width: 100%;
@@ -329,6 +337,18 @@ body {
   to   { opacity: 1; transform: translateY(0); }
 }
 
+/* Tiny shake on the driver panel each time a new message lands. */
+.log.msg-bump {
+  animation: msg-bump 280ms ease-out;
+}
+
+@keyframes msg-bump {
+  0%, 100% { transform: translateX(0); }
+  25%      { transform: translateX(-2px); }
+  50%      { transform: translateX(2px); }
+  75%      { transform: translateX(-1px); }
+}
+
 .log-action {
   display: flex;
   justify-content: center;
@@ -371,6 +391,17 @@ body {
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
   margin-left: auto;
+}
+
+.supervisor-tip {
+  margin: 0;
+  padding: 6px 10px;
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--text-dim);
+  background: rgba(37, 99, 235, 0.08);
+  border: 1px solid rgba(37, 99, 235, 0.22);
+  border-radius: var(--radius-sm);
 }
 
 .dispatch-mode-tag {

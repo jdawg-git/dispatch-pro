@@ -6,10 +6,11 @@
   <meta name="theme-color" content="#0f1419" />
   <title>Dispatch Pro</title>
   <link rel="stylesheet" href="style.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
 </head>
 <body>
   <header class="app-header">
-    <h1>DISPATCH PRO</h1>
+    <img class="app-logo" src="DispatchPro.png" alt="Dispatch Pro" width="254" height="95" />
   </header>
 
   <main class="app-main">
@@ -63,6 +64,7 @@
             <span class="dispatch-mode-tag" id="dispatch-mode-tag" hidden>SOLUTION</span>
             <span class="char-count" id="char-count" aria-live="polite">0</span>
           </div>
+          <p class="supervisor-tip" id="supervisor-tip" hidden></p>
           <textarea id="dispatch-input" rows="3" placeholder="Type your route here…" autocomplete="off"></textarea>
           <button id="transmit-btn" class="btn btn-primary btn-wide" type="button">
             <span class="btn-label">📻 TRANSMIT</span>

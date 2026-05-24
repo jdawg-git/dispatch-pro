@@ -149,7 +149,7 @@ export class Renderer {
     // target cell, then tick++. Returns null on red-light fail.
     const advanceOne = async (fromCol, fromRow, intoDir) => {
       const [tc, tr] = stepCell(fromCol, fromRow, intoDir);
-      let ok = await this._consumeLightAt(tc, tr, onMsg);
+      let ok = await this._consumeLightAt(tc, tr, onMsg, /*announce*/ false);
       if (!ok) {
         // Engine forgiveness: the player included a wait_for_green further
         // down the action list (natural English order — "drive to the
@@ -159,7 +159,9 @@ export class Renderer {
           if (actions[j].type === 'wait_for_green') {
             skipIndices.add(j);
             this._pendingWait = true;
-            ok = await this._consumeLightAt(tc, tr, onMsg);
+            // The wait wasn't announced earlier (it was claimed silently from
+            // later in the queue), so let _consumeLightAt narrate the hold.
+            ok = await this._consumeLightAt(tc, tr, onMsg, /*announce*/ true);
             break;
           }
         }
@@ -331,7 +333,11 @@ export class Renderer {
   // Red-light enforcement. If the target cell is lit and not currently green,
   // either consume a pending wait token (advancing ticks visibly until the
   // light turns green) or fail the attempt. Returns true if the car may enter.
-  async _consumeLightAt(targetCol, targetRow, onMsg) {
+  // `announce` controls whether to narrate the hold via onMsg — false when an
+  // explicit wait_for_green action already showed a "Holding..." line just
+  // before this entry (avoid duplicate narration); true when the wait was
+  // claimed silently via the engine's lookahead.
+  async _consumeLightAt(targetCol, targetRow, onMsg, announce = true) {
     const lights = this.maze?.lights;
     if (!lights || lights.size === 0) return true;
     const light = lights.get(`${targetCol},${targetRow}`);
@@ -341,7 +347,9 @@ export class Renderer {
     if (!this._pendingWait) return false;
     // Show the hold visually: advance one tick at a time, re-render so the
     // signal's circles cycle, pause briefly between ticks.
-    onMsg?.({ icon: '🚦', msg: 'Holding for the green light...', kind: 'info' });
+    if (announce) {
+      onMsg?.({ icon: '🚦', msg: 'Holding for the green light...', kind: 'info' });
+    }
     let safety = 0;
     while (color !== 'G' && safety++ < LIGHT_TICK_SAFETY) {
       if (this._aborted) return true;
@@ -351,7 +359,9 @@ export class Renderer {
       color = lightColorAt(light, this._tick);
     }
     this._pendingWait = false;
-    onMsg?.({ icon: '✅', msg: 'Green. Rolling.', kind: 'info' });
+    if (announce) {
+      onMsg?.({ icon: '✅', msg: 'Green. Rolling.', kind: 'info' });
+    }
     return true;
   }
 

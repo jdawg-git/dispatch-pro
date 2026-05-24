@@ -18,6 +18,7 @@ const els = {
   charCount:        document.getElementById('char-count'),
   mapMeta:          document.getElementById('map-meta'),
   dispatchModeTag:  document.getElementById('dispatch-mode-tag'),
+  supervisorTip:    document.getElementById('supervisor-tip'),
   lockoutBlockTextEl: document.getElementById('lockout-message'),
   inspectBtn:       document.getElementById('inspect-btn'),
   actionsModal:     document.getElementById('actions-modal'),

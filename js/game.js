@@ -1,6 +1,7 @@
 // Attempt loop, success/fail/lockout, driver display, transmission ripple.
 
 import { transmit, GeminiError } from './gemini.js';
+import { play as playSfx, playRandomChirp, preloadAll as preloadSfx } from './audio.js';
 
 const MAX_ATTEMPTS = 3;
 
@@ -15,11 +16,18 @@ export function createGame({ renderer, els, showToast }) {
     lastPromptChars: 0,
     lastActions: null,
     lastActionsSource: null, // 'transmit' | 'reveal'
+    // Set right after the beep so the first driver line of a route doesn't
+    // double-up the horn with a chirp. Cleared after the first chirp-eligible
+    // message fires.
+    suppressNextChirp: false,
     // 'play'   — TRANSMIT sends the textarea through Gemini (normal flow).
     // 'reveal' — TRANSMIT is repurposed as "Watch the solution"; plays canned
     //            actions from maze.solution.actions, bypassing Gemini entirely.
     mode: 'play',
   };
+
+  // Preload the SFX so the first beep/chirp plays with zero latency.
+  preloadSfx();
 
   // -------- DOM event wiring --------
   els.transmitBtn.addEventListener('click', onPrimaryClick);
@@ -41,6 +49,7 @@ export function createGame({ renderer, els, showToast }) {
 
   function onPrimaryClick() {
     if (state.mode === 'reveal') return onWatch();
+    if (state.mode === 'replay') return onReplay();
     return onTransmit();
   }
 
@@ -69,6 +78,7 @@ export function createGame({ renderer, els, showToast }) {
     state.lastPromptChars = 0;
     state.lastActions = null;
     state.lastActionsSource = null;
+    state.suppressNextChirp = false;
     state.mode = 'play';
     clearLog();
     els.dispatchInput.value = '';
@@ -77,7 +87,18 @@ export function createGame({ renderer, els, showToast }) {
     els.dispatchInput.dispatchEvent(new Event('input'));
     els.dispatchInput.disabled = false;
     els.dispatchModeTag.hidden = true;
+    els.dispatchModeTag.textContent = 'SOLUTION';
+    els.btnLabel.textContent = '📻 TRANSMIT';
     els.lockoutBlock.classList.remove('banner');
+    // Supervisor tip refreshes per map.
+    const canned = maze?.solution?.english?.length ?? 0;
+    if (canned > 0) {
+      els.supervisorTip.textContent =
+        `The Dispatch Supervisor did this route in ${canned} characters. Can you beat that?`;
+      els.supervisorTip.hidden = false;
+    } else {
+      els.supervisorTip.hidden = true;
+    }
     showPlayLayout();
     setSpinner(false);
     setTransmitDisabled(false);
@@ -118,6 +139,11 @@ export function createGame({ renderer, els, showToast }) {
       // Radio-wave ripple before the car starts moving.
       await playRipple();
       if (state.generation !== generation) return;
+
+      // Car is rolling — give it a horn. Suppress the chirp on the first
+      // driver line so the beep gets the spotlight.
+      playSfx('beepbeep');
+      state.suppressNextChirp = true;
 
       // Run the route. setDriverMessage replaces the previous line each step.
       result = await renderer.animateActions(actions, setDriverMessage);
@@ -171,13 +197,50 @@ export function createGame({ renderer, els, showToast }) {
   // -------- Outcomes --------
   function onSuccess() {
     state.solved = true;
-    setDriverMessage({ icon: '🏁', msg: 'Destination reached. Good navigation, dispatch.', kind: 'win' });
-    showWinLayout();
-    els.lockoutBlockTextEl.textContent =
-      'Route delivered. Generate a new map for another run.';
+    state.mode = 'replay';
+    playSfx('win');
+
+    const canned = state.maze?.solution?.english?.length ?? Infinity;
+    const beat = state.lastPromptChars > 0 && state.lastPromptChars < canned;
+    if (beat) {
+      fireConfetti();
+      const diff = canned - state.lastPromptChars;
+      setDriverMessage({
+        icon: '🎉',
+        msg: `Beat the supervisor by ${diff} character${diff === 1 ? '' : 's'}. Showstopper, dispatch.`,
+        kind: 'win',
+      });
+    } else {
+      setDriverMessage({
+        icon: '🏁',
+        msg: 'Destination reached. Good navigation, dispatch.',
+        kind: 'win',
+      });
+    }
+
+    // Repurpose the dispatch block for replay (mirrors the reveal flow).
+    els.dispatchInput.readOnly = true;
+    els.dispatchInput.classList.add('readonly');
+    els.btnLabel.textContent = '▶ Replay your route';
+    els.dispatchModeTag.textContent = 'WIN';
+    els.dispatchModeTag.hidden = false;
+    els.supervisorTip.hidden = true;
+    els.transmitBtn.disabled = false;
+    // Same layout as reveal — dispatch visible, lockout hidden.
+    showRevealLayout();
+  }
+
+  // Two angled confetti bursts. Optional-chains the call so a CDN failure
+  // (no global `confetti`) silently no-ops without breaking the win flow.
+  function fireConfetti() {
+    const cf = window.confetti;
+    if (typeof cf !== 'function') return;
+    cf({ particleCount: 90, spread: 70, angle: 60,  origin: { x: 0, y: 0.95 } });
+    cf({ particleCount: 90, spread: 70, angle: 120, origin: { x: 1, y: 0.95 } });
   }
 
   function onFailRetry(result) {
+    playSfx('lose');
     const reason = failReason(result);
     setDriverMessage({
       icon: '📻',
@@ -211,6 +274,7 @@ export function createGame({ renderer, els, showToast }) {
   function onLockout(result) {
     state.lockedOut = true;
     state.mode = 'reveal';
+    playSfx('lose');
     const reason = failReason(result);
     setDriverMessage({
       icon: '📡',
@@ -228,7 +292,9 @@ export function createGame({ renderer, els, showToast }) {
     // Repurpose the TRANSMIT button in place.
     els.btnLabel.textContent = '▶ Watch the solution';
     els.transmitBtn.disabled = false;
+    els.dispatchModeTag.textContent = 'SOLUTION';
     els.dispatchModeTag.hidden = false;
+    els.supervisorTip.hidden = true; // player is now looking at the supervisor's prompt
     showRevealLayout();
   }
 
@@ -254,9 +320,12 @@ export function createGame({ renderer, els, showToast }) {
       }
       await playRipple();
       if (state.generation !== generation) return;
-      await renderer.animateActions(state.maze.solution.actions, setDriverMessage);
+      playSfx('beepbeep');
+      state.suppressNextChirp = true;
+      const result = await renderer.animateActions(state.maze.solution.actions, setDriverMessage);
       if (state.generation !== generation) return;
       // Final flourish — replace the last action's msg with a confirmation.
+      if (result.success) playSfx('win');
       setDriverMessage({ icon: '🏁', msg: 'Destination reached. That was the route.', kind: 'win' });
     } catch (err) {
       if (state.generation !== generation) return;
@@ -267,6 +336,47 @@ export function createGame({ renderer, els, showToast }) {
         state.inFlight = false;
         setTransmitDisabled(false);
         els.btnLabel.textContent = '▶ Watch the solution';
+      }
+    }
+  }
+
+  // Replay the player's last successful action list. Mirrors onWatch but reads
+  // from state.lastActions instead of the canned solution, and does NOT touch
+  // attempts / solved state — purely cosmetic playback.
+  async function onReplay() {
+    if (state.inFlight) return;
+    if (!state.lastActions?.length) {
+      showToast('No route to replay yet.', 'error');
+      return;
+    }
+    const generation = state.generation;
+    state.inFlight = true;
+    setTransmitDisabled(true);
+    els.btnLabel.textContent = '▶ Replaying…';
+    clearLog();
+
+    try {
+      if (renderer.car.col !== 0 || renderer.car.row !== 0) {
+        await renderer.resetCar();
+        if (state.generation !== generation) return;
+      }
+      await playRipple();
+      if (state.generation !== generation) return;
+      playSfx('beepbeep');
+      state.suppressNextChirp = true;
+      const result = await renderer.animateActions(state.lastActions, setDriverMessage);
+      if (state.generation !== generation) return;
+      if (result.success) playSfx('win');
+      setDriverMessage({ icon: '🏁', msg: 'Destination reached. That was your route.', kind: 'win' });
+    } catch (err) {
+      if (state.generation !== generation) return;
+      console.error('[replay] unexpected error:', err);
+      showToast('Something went wrong replaying the route.', 'error');
+    } finally {
+      if (state.generation === generation) {
+        state.inFlight = false;
+        setTransmitDisabled(false);
+        els.btnLabel.textContent = '▶ Replay your route';
       }
     }
   }
@@ -336,7 +446,10 @@ export function createGame({ renderer, els, showToast }) {
   }
 
   // Replaces the current driver line. Try-Again button (if present) is left
-  // untouched so it stays visible across messages.
+  // untouched so it stays visible across messages. Plays a random chirp for
+  // regular narration (skipped on the first message of a route so the beep
+  // gets clean air, and skipped on win/fail summary lines so the win.mp3 /
+  // lose.mp3 plays cleanly). Every message triggers a subtle panel shake.
   function setDriverMessage({ icon, msg, kind }) {
     els.log.querySelector('.log-entry')?.remove();
     const entry = document.createElement('div');
@@ -351,6 +464,20 @@ export function createGame({ renderer, els, showToast }) {
     const action = els.log.querySelector('.log-action');
     if (action) els.log.insertBefore(entry, action);
     else els.log.append(entry);
+
+    // Subtle shake every time a new message lands. Toggling the class with a
+    // forced reflow restarts the keyframe so rapid-fire messages keep shaking.
+    els.log.classList.remove('msg-bump');
+    void els.log.offsetWidth;
+    els.log.classList.add('msg-bump');
+
+    if (kind !== 'win' && kind !== 'fail') {
+      if (state.suppressNextChirp) {
+        state.suppressNextChirp = false;
+      } else {
+        playRandomChirp();
+      }
+    }
   }
 
   function renderActionList(actions, source) {
