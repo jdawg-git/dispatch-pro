@@ -182,8 +182,8 @@ export function createGame({ renderer, els, showToast }) {
   // the action list ran out before reaching DEST.
   function failReason(result) {
     if (result?.ranRed) return 'ran a red light';
-    if (result?.hitWallAt) return 'turned off the road';
-    return 'ran out of directions';
+    if (result?.hitWallAt) return 'hit a wall';
+    return 'incomplete route';
   }
 
   function handleTransmitError(err) {
@@ -255,7 +255,6 @@ export function createGame({ renderer, els, showToast }) {
   function onFailRetry(result) {
     playSfx('lose');
     const reason = failReason(result);
-    recordGame({ ...statBase(), outcome: 'fail', failure_reason: reason, beat_supervisor: false });
     setDriverMessage({
       icon: '📻',
       msg: `Attempt ${state.attemptsUsed} failed — ${reason}. Try again, dispatch.`,

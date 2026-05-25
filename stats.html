@@ -156,7 +156,7 @@
     }
     .bar-row {
       display: grid;
-      grid-template-columns: 110px 1fr 48px;
+      grid-template-columns: 110px 1fr 76px;
       align-items: center;
       gap: 10px;
       font-size: 13px;
@@ -357,15 +357,14 @@
 
       const avgAttempts = engagement.avgAttemptsPerWin !== null
         ? Number(engagement.avgAttemptsPerWin).toFixed(2) : '—';
-      const firstAttemptWins = engagement.attemptsDistribution.find(r => r.attempts === 1)?.count ?? 0;
-      const firstAttemptPct = totals.wins > 0 ? pct(firstAttemptWins, totals.wins) : 0;
-      const lockoutPct = totals.games > 0 ? pct(totals.lockouts, totals.games) : 0;
       const beatPct = totals.wins > 0 ? pct(engagement.beatSupervisorCount, totals.wins) : 0;
 
       engGrid.append(
         kpiCard('Avg Attempts / Win', avgAttempts, 'on winning games'),
-        kpiCard('1st-Attempt Wins', firstAttemptPct + '%', `${fmt(firstAttemptWins)} of ${fmt(totals.wins)} wins`, 'success'),
-        kpiCard('Lockout Rate', lockoutPct + '%', `${fmt(totals.lockouts)} lockouts`, 'danger'),
+        kpiCard('Retry Rate', engagement.retryRate + '%',
+          `${fmt(engagement.retriedCount)} of ${fmt(engagement.completedTotal)} maps`, 'warn'),
+        kpiCard('Lockout Rate', totals.lockoutRate + '%',
+          `${fmt(totals.lockouts)} of ${fmt(totals.completedMaps)} completed maps`, 'danger'),
         kpiCard('Beat Supervisor', fmt(engagement.beatSupervisorCount), beatPct + '% of wins', 'accent'),
       );
       engSection.append(engGrid);
@@ -511,8 +510,10 @@
         const fill = div('bar-fill' + (row.color ? ' ' + row.color : ''));
         fill.style.width = pctVal + '%';
         track.append(fill);
-        barRow.append(track);
-        barRow.append(el('span', 'bar-count', fmt(row.count)));
+        const countLabel = row.pct !== undefined
+          ? row.pct + '% (' + fmt(row.count) + ')'
+          : fmt(row.count);
+        barRow.append(el('span', 'bar-count', countLabel));
         list.append(barRow);
       }
       return list;

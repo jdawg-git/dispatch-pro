@@ -151,7 +151,7 @@ async function handleStatsRead(req, res) {
       dailyGames,
       engagementWins,
       attemptsDistribution,
-      lockouts,
+      retryStats,
       beatSupervisor,
       failureReasons,
       byDifficulty,
@@ -162,7 +162,6 @@ async function handleStatsRead(req, res) {
         SELECT
           COUNT(*)                                            AS total_games,
           COUNT(*) FILTER (WHERE outcome = 'win')            AS total_wins,
-          COUNT(*) FILTER (WHERE outcome = 'fail')           AS total_fails,
           COUNT(*) FILTER (WHERE outcome = 'lockout')        AS total_lockouts
         FROM game_results
       `),
@@ -177,8 +176,7 @@ async function handleStatsRead(req, res) {
         ORDER BY 1 ASC
       `),
       pool.query(`
-        SELECT
-          ROUND(AVG(attempts_used), 2) AS avg_attempts_per_win
+        SELECT ROUND(AVG(attempts_used), 2) AS avg_attempts_per_win
         FROM game_results
         WHERE outcome = 'win' AND attempts_used IS NOT NULL
       `),
@@ -190,9 +188,11 @@ async function handleStatsRead(req, res) {
         ORDER BY attempts_used ASC
       `),
       pool.query(`
-        SELECT COUNT(*) AS lockout_count
+        SELECT
+          COUNT(*) FILTER (WHERE attempts_used >= 2) AS retried_count,
+          COUNT(*)                                   AS completed_total
         FROM game_results
-        WHERE outcome = 'lockout'
+        WHERE outcome IN ('win', 'lockout')
       `),
       pool.query(`
         SELECT
@@ -204,7 +204,7 @@ async function handleStatsRead(req, res) {
       pool.query(`
         SELECT failure_reason, COUNT(*) AS count
         FROM game_results
-        WHERE outcome IN ('fail', 'lockout') AND failure_reason IS NOT NULL
+        WHERE outcome IN ('lockout') AND failure_reason IS NOT NULL
         GROUP BY failure_reason
         ORDER BY count DESC
       `),
@@ -233,18 +233,28 @@ async function handleStatsRead(req, res) {
     ]);
 
     const t = totals.rows[0];
-    const totalGames = Number(t.total_games);
-    const totalWins  = Number(t.total_wins);
-    const winRate    = totalGames > 0 ? Math.round((totalWins / totalGames) * 100) : 0;
+    const totalWins     = Number(t.total_wins);
+    const totalLockouts = Number(t.total_lockouts);
+    const completedMaps = totalWins + totalLockouts;
+    const winRate       = completedMaps > 0 ? Math.round((totalWins / completedMaps) * 100) : 0;
+    const lockoutRate   = completedMaps > 0 ? Math.round((totalLockouts / completedMaps) * 100) : 0;
+
+    const rs = retryStats.rows[0];
+    const retriedCount    = Number(rs.retried_count);
+    const completedTotal  = Number(rs.completed_total);
+    const retryRate       = completedTotal > 0 ? Math.round((retriedCount / completedTotal) * 100) : 0;
+
+    const totalFailReasons = failureReasons.rows.reduce((s, r) => s + Number(r.count), 0);
 
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({
       totals: {
-        games:    totalGames,
-        wins:     totalWins,
-        fails:    Number(t.total_fails),
-        lockouts: Number(t.total_lockouts),
+        games:        Number(t.total_games),
+        wins:         totalWins,
+        lockouts:     totalLockouts,
+        completedMaps,
         winRate,
+        lockoutRate,
       },
       sessions:   Number(sessionCount.rows[0].total),
       dailyGames: dailyGames.rows.map(r => ({ day: r.day, count: Number(r.count) })),
@@ -255,14 +265,20 @@ async function handleStatsRead(req, res) {
           attempts: Number(r.attempts_used),
           count: Number(r.count),
         })),
-        lockoutCount: Number(lockouts.rows[0].lockout_count),
+        retryRate,
+        retriedCount,
+        completedTotal,
         beatSupervisorCount: Number(beatSupervisor.rows[0].beat_count),
         beatSupervisorWinCount: Number(beatSupervisor.rows[0].win_count),
       },
-      failureReasons: failureReasons.rows.map(r => ({
-        reason: r.failure_reason,
-        count: Number(r.count),
-      })),
+      failureReasons: failureReasons.rows.map(r => {
+        const count = Number(r.count);
+        return {
+          reason: r.failure_reason,
+          count,
+          pct: totalFailReasons > 0 ? Math.round((count / totalFailReasons) * 100) : 0,
+        };
+      }),
       byDifficulty: byDifficulty.rows.map(r => ({
         difficulty: r.difficulty,
         count: Number(r.count),
