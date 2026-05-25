@@ -28,6 +28,8 @@ const pool = process.env.DATABASE_URL
 
 if (!pool) {
   console.warn('[dispatch] No DATABASE_URL found. Stats endpoints will be disabled.');
+} else {
+  initDb();
 }
 
 const MIME = {
@@ -45,6 +47,33 @@ const MIME = {
   '.wav':  'audio/wav',
   '.ogg':  'audio/ogg',
 };
+
+async function initDb() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS sessions (
+        id SERIAL PRIMARY KEY,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS game_results (
+        id SERIAL PRIMARY KEY,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        outcome TEXT NOT NULL,
+        failure_reason TEXT,
+        difficulty TEXT,
+        grid_size TEXT,
+        path_length INTEGER,
+        prompt_chars INTEGER,
+        attempts_used INTEGER,
+        beat_supervisor BOOLEAN DEFAULT FALSE,
+        actions_count INTEGER
+      );
+    `);
+    console.log('[dispatch] DB schema ready');
+  } catch (err) {
+    console.error('[dispatch] DB init error:', err.message);
+  }
+}
 
 const server = http.createServer(async (req, res) => {
   try {

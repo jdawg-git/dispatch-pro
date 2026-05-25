@@ -364,7 +364,7 @@
         kpiCard('Retry Rate', engagement.retryRate + '%',
           `${fmt(engagement.retriedCount)} of ${fmt(engagement.completedTotal)} maps`, 'warn'),
         kpiCard('Lockout Rate', totals.lockoutRate + '%',
-          `${fmt(totals.lockouts)} of ${fmt(totals.completedMaps)} completed maps`, 'danger'),
+          `${fmt(totals.lockouts)} of ${fmt(totals.completedMaps)} maps played to end`, 'danger'),
         kpiCard('Beat Supervisor', fmt(engagement.beatSupervisorCount), beatPct + '% of wins', 'accent'),
       );
       engSection.append(engGrid);
@@ -393,12 +393,13 @@
       if (failureReasons.length > 0) {
         const failSection = section('Failure Intelligence');
         const panel = div('panel');
-        panel.append(el('p', 'section-title', 'Loss reasons (fails + lockouts)'));
+        panel.append(el('p', 'section-title', 'Lockout failure reasons'));
         const totalFails = failureReasons.reduce((s, r) => s + r.count, 0);
         const colors = ['danger', 'warn', ''];
         panel.append(barList(failureReasons.map((r, i) => ({
           label: r.reason,
           count: r.count,
+          pct: r.pct,
           max: totalFails,
           color: colors[i] || '',
         }))));
@@ -417,6 +418,7 @@
         dp.append(barList(byDifficulty.map(r => ({
           label: capitalize(r.difficulty),
           count: r.count,
+          pct: total > 0 ? Math.round((r.count / total) * 100) : 0,
           max: total,
         }))));
         prefGrid.append(dp);
@@ -429,6 +431,7 @@
         gp.append(barList(byGridSize.map(r => ({
           label: r.gridSize,
           count: r.count,
+          pct: total > 0 ? Math.round((r.count / total) * 100) : 0,
           max: total,
         }))));
         prefGrid.append(gp);
