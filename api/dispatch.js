@@ -191,6 +191,7 @@ async function handleStatsRead(req, res) {
         SELECT
           COUNT(*)                                            AS total_games,
           COUNT(*) FILTER (WHERE outcome = 'win')            AS total_wins,
+          COUNT(*) FILTER (WHERE outcome = 'fail')           AS total_fails,
           COUNT(*) FILTER (WHERE outcome = 'lockout')        AS total_lockouts
         FROM game_results
       `),
@@ -233,7 +234,7 @@ async function handleStatsRead(req, res) {
       pool.query(`
         SELECT failure_reason, COUNT(*) AS count
         FROM game_results
-        WHERE outcome IN ('lockout') AND failure_reason IS NOT NULL
+        WHERE outcome IN ('fail', 'lockout') AND failure_reason IS NOT NULL
         GROUP BY failure_reason
         ORDER BY count DESC
       `),
@@ -263,6 +264,7 @@ async function handleStatsRead(req, res) {
 
     const t = totals.rows[0];
     const totalWins     = Number(t.total_wins);
+    const totalFails    = Number(t.total_fails);
     const totalLockouts = Number(t.total_lockouts);
     const completedMaps = totalWins + totalLockouts;
     const winRate       = completedMaps > 0 ? Math.round((totalWins / completedMaps) * 100) : 0;
@@ -280,6 +282,7 @@ async function handleStatsRead(req, res) {
       totals: {
         games:        Number(t.total_games),
         wins:         totalWins,
+        fails:        totalFails,
         lockouts:     totalLockouts,
         completedMaps,
         winRate,

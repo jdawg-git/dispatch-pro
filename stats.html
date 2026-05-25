@@ -306,8 +306,6 @@
 
     function render(d) {
       const { totals, sessions, dailyGames, engagement, failureReasons, byDifficulty, byGridSize, recentActivity } = d;
-      const totalFailLoss = totals.fails + totals.lockouts;
-
       // ---- Volume & Growth ----
       const volSection = section('Volume & Growth');
       const kpiGrid = div('kpi-grid');

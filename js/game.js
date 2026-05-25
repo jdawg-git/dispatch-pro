@@ -255,6 +255,7 @@ export function createGame({ renderer, els, showToast }) {
   function onFailRetry(result) {
     playSfx('lose');
     const reason = failReason(result);
+    recordGame({ ...statBase(), outcome: 'fail', failure_reason: reason, beat_supervisor: false });
     setDriverMessage({
       icon: '📻',
       msg: `Attempt ${state.attemptsUsed} failed — ${reason}. Try again, dispatch.`,
