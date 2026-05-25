@@ -21,9 +21,9 @@ const DIFFICULTY_P_STRAIGHT = {
 // per cell the car enters and once per `wait` action. Each light has its own
 // `offset` baked into the seed so they're out of phase.
 //
-// Cycle: RED → YELLOW (prep — get ready) → GREEN → RED → ...
-// Phases are 4 red / 2 yellow / 4 green = 10 ticks total.
-export const LIGHT_PATTERN = ['R', 'R', 'R', 'R', 'Y', 'Y', 'G', 'G', 'G', 'G'];
+// Cycle: RED → GREEN → YELLOW (warning — about to turn red) → RED → ...
+// Phases are 4 red / 4 green / 2 yellow = 10 ticks total.
+export const LIGHT_PATTERN = ['R', 'R', 'R', 'R', 'G', 'G', 'G', 'G', 'Y', 'Y'];
 export const LIGHT_PERIOD = LIGHT_PATTERN.length;
 
 export function lightColorAt(light, tick) {
@@ -331,7 +331,7 @@ function makeFollowRoad() {
   return {
     type: 'follow_road',
     msg: 'Following the road.',
-    icon: '🛣️',
+    icon: '↩️',
   };
 }
 function makeWaitForGreen() {
@@ -347,8 +347,8 @@ function turnMsg(t) {
   return 'Spinning the wheel.';
 }
 function turnIcon(t) {
-  if (t === 'left')  return '↪️';
-  if (t === 'right') return '↩️';
+  if (t === 'left')  return '⬅️';
+  if (t === 'right') return '➡️';
   return '🔄';
 }
 

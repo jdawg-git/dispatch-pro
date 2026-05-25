@@ -81,7 +81,7 @@ CRITICAL
 - If the player tells the driver to "take a turn" / "take the next turn" / "take N turns" WITHOUT specifying left or right, use { "type":"follow_road", ... } — never guess a direction. follow_road handles every bend in a single corridor.
 - Likewise, if the player references "the intersection" or "the next intersection" but the passage list shows no cell with 3+ open passages, prefer { "type":"follow_road", ... } over { "type":"move_until", "target":"intersection", ... }. follow_road will drive to the destination through every bend.
 - HARD RULE: if the word "intersection" appears in the player's instruction before a turn direction, you MUST emit { "type":"move_until","target":"intersection",...} then { "type":"turn", "dir": ..., ... }. NEVER emit take_turn in that case. take_turn would grab the first bend with that side open and turn at the wrong cell.
-- TRAFFIC LIGHTS: if the player tells the driver to wait at a light or "wait for the green", emit a wait_for_green action BEFORE the action that arrives at that lit intersection. If the player does NOT mention waiting and the route passes through a lit intersection, do NOT silently insert wait_for_green — running a red is a player-visible mistake and the puzzle. (Easy mazes have no lights at all.)
+- TRAFFIC LIGHTS — STRICT: emit a wait_for_green action ONLY when the player's instruction explicitly tells the driver to wait, hold, or watch the light. If the player does NOT mention waiting and the route passes through a lit intersection, do NOT insert wait_for_green for them — running a red is the player's mistake and the whole point of the puzzle. Do NOT be charitable on this rule. Do NOT add a wait "just to be safe." If the player wrote a wait, place it BEFORE the action that arrives at the lit intersection (or immediately after — the engine tolerates natural English order). (Easy mazes have no lights at all.)
 
 INSTRUCTION → ACTION EXAMPLES
 - "Go straight 3" → [{ "type":"move", "count":3, ... }]
@@ -107,6 +107,8 @@ More examples
 - Plain "drive to the destination" with no other hints → [{ "type":"follow_road", ... }] (the engine will reach the star if the route is unambiguous, or stop at the first real intersection so you can guide further).
 - "Go to the next intersection, wait for the green, then turn left" → [{ "type":"move_until","target":"intersection",...}, { "type":"wait_for_green",...}, { "type":"turn", "dir":"left",...}]
 - "Follow the road, hold for the green, then take a right" → [{ "type":"follow_road",...}, { "type":"wait_for_green",...}, { "type":"turn", "dir":"right",...}]
+- "Drive to the next intersection and turn left" (NO wait mentioned, even if a lit intersection is on the route) → [{ "type":"move_until","target":"intersection",...}, { "type":"turn", "dir":"left",...}] — NEVER add a wait_for_green the player didn't ask for. Running the red is their problem.
+- "Follow the road to the destination" (NO wait mentioned) → [{ "type":"follow_road", ... }] — even if the route passes lit intersections, do NOT auto-insert waits.
 - "Continue straight through" / "Go straight through the intersection" / "Roll straight through" → [{ "type":"move", "count":1, ... }] (a single forward step that crosses the intersection cell — needed because follow_road STOPS at intersections; if the canonical route goes straight through one without turning, the driver still needs an explicit cross step).
 
 DRIVER PERSONA (use this voice for every "msg")
@@ -123,6 +125,7 @@ DRIVER PERSONA (use this voice for every "msg")
 OUTPUT RULES
 - Output ONLY a valid JSON array of action objects. No markdown, no commentary, no preamble.
 - Every action MUST include "msg" (driver voice per above) and "icon" (a single relevant emoji).
+- Every action MUST include "source" — a short verbatim snippet (≤ 80 chars) of the PLAYER'S instruction that produced this action. Copy the relevant phrase exactly as the player wrote it (case, punctuation, typos intact). If multiple actions share a phrase, repeat the relevant snippet on each. If an action has no clean source phrase (rare), use an empty string.
 - Be charitable: if instructions are ambiguous, pick the most plausible interpretation.`;
 }
 
@@ -188,6 +191,33 @@ const VALID_TARGETS = new Set(['wall', 'intersection']);
 const VALID_TURN_DIRS = new Set(['left', 'right', 'around']);
 const VALID_TAKE_DIRS = new Set(['left', 'right']);
 
+// Heuristic: does this string contain at least one symbol/emoji code point?
+// Used to reject icons where the LLM sent plain ASCII text like "cur" or
+// "curve" instead of an actual glyph.
+function looksLikeEmoji(s) {
+  if (!s) return false;
+  for (const ch of s) {
+    const cp = ch.codePointAt(0);
+    if (cp >= 0x2300) return true; // catches arrows, misc symbols, all emoji blocks
+  }
+  return false;
+}
+
+// Sensible per-action-type fallback when the LLM's `icon` isn't a real glyph.
+// Direction-carrying actions get a directional arrow (⬅️ / ➡️); follow_road
+// (an unmarked curve/bend) gets the curved-return arrow (↩️).
+function defaultIconFor(type, opts = {}) {
+  if (type === 'move_until') return opts.target === 'wall' ? '🛑' : '🚦';
+  if (type === 'turn' && opts.dir === 'around') return '🔄';
+  if ((type === 'turn' || type === 'take_turn') && opts.dir === 'left')  return '⬅️';
+  if ((type === 'turn' || type === 'take_turn') && opts.dir === 'right') return '➡️';
+  if (type === 'follow_road') return '↩️';
+  if (type === 'wait_for_green') return '🚦';
+  if (type === 'wait') return '⏱️';
+  if (type === 'say') return '💬';
+  return '🚗';
+}
+
 export function parseActionsFromReply(text) {
   let s = String(text).trim();
 
@@ -209,31 +239,33 @@ export function parseActionsFromReply(text) {
     if (!VALID_TYPES.has(type)) continue;
 
     const msg = typeof raw.msg === 'string' ? raw.msg.slice(0, 120) : '';
-    const icon = (typeof raw.icon === 'string' && raw.icon.trim()) ? raw.icon.slice(0, 4) : '🚗';
+    const rawIcon = (typeof raw.icon === 'string' && raw.icon.trim()) ? raw.icon.slice(0, 4) : '';
+    const source = typeof raw.source === 'string' ? raw.source.slice(0, 120).trim() : '';
+    const pick = (opts) => looksLikeEmoji(rawIcon) ? rawIcon : defaultIconFor(type, opts);
 
     if (type === 'move') {
       const count = Math.max(1, Math.min(25, Math.floor(Number(raw.count) || 1)));
-      out.push({ type, count, msg, icon });
+      out.push({ type, count, msg, icon: pick(), source });
     } else if (type === 'move_until') {
       const target = String(raw.target || '').trim();
       if (!VALID_TARGETS.has(target)) continue;
-      out.push({ type, target, msg, icon });
+      out.push({ type, target, msg, icon: pick({ target }), source });
     } else if (type === 'take_turn') {
       const dir = String(raw.dir || '').trim();
       if (!VALID_TAKE_DIRS.has(dir)) continue;
-      out.push({ type, dir, msg, icon });
+      out.push({ type, dir, msg, icon: pick({ dir }), source });
     } else if (type === 'turn') {
       const dir = String(raw.dir || '').trim();
       if (!VALID_TURN_DIRS.has(dir)) continue;
-      out.push({ type, dir, msg, icon });
+      out.push({ type, dir, msg, icon: pick({ dir }), source });
     } else if (type === 'say') {
-      out.push({ type, msg, icon });
+      out.push({ type, msg, icon: pick(), source });
     } else if (type === 'follow_road') {
-      out.push({ type, msg, icon });
+      out.push({ type, msg, icon: pick(), source });
     } else if (type === 'wait_for_green') {
-      out.push({ type, msg, icon });
+      out.push({ type, msg, icon: pick(), source });
     } else if (type === 'wait') {
-      out.push({ type, msg, icon });
+      out.push({ type, msg, icon: pick(), source });
     }
   }
   return out;

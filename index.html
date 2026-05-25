@@ -18,8 +18,8 @@
       <label class="control">
         <span>Grid</span>
         <select id="grid-size">
-          <option value="5">5×5</option>
-          <option value="7" selected>7×7</option>
+          <option value="5" selected>5×5</option>
+          <option value="7">7×7</option>
           <option value="9">9×9</option>
           <option value="11">11×11</option>
           <option value="13">13×13</option>
@@ -65,7 +65,7 @@
             <span class="char-count" id="char-count" aria-live="polite">0</span>
           </div>
           <p class="supervisor-tip" id="supervisor-tip" hidden></p>
-          <textarea id="dispatch-input" rows="3" placeholder="Type your route here…" autocomplete="off"></textarea>
+          <textarea id="dispatch-input" rows="3" placeholder="Type instructions for your driver to get from their starting spot, to the destination. Explain the route as if you were talking to a person." autocomplete="off"></textarea>
           <button id="transmit-btn" class="btn btn-primary btn-wide" type="button">
             <span class="btn-label">📻 TRANSMIT</span>
             <span class="spinner" hidden></span>

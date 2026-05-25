@@ -490,9 +490,15 @@ export function createGame({ renderer, els, showToast }) {
     const rows = actions.map((a, i) => {
       const num = `<span class="num">${i + 1}.</span>`;
       const icon = `<span class="icon">${escapeHtml(a.icon || '🚗')}</span>`;
-      const type = `<span class="type">${escapeHtml(formatActionType(a))}</span>`;
-      const msg = a.msg ? `<span class="msg">${escapeHtml(a.msg)}</span>` : '';
-      return `<li>${num}${icon}<div class="action-body">${type}${msg}</div></li>`;
+      const lines = [];
+      if (a.source) {
+        lines.push(`<span class="source">You said: &ldquo;${escapeHtml(a.source)}&rdquo;</span>`);
+      }
+      lines.push(`<span class="type">Parsed to: <code>${escapeHtml(formatActionType(a))}</code></span>`);
+      if (a.msg) {
+        lines.push(`<span class="msg">Driver Response: &ldquo;${escapeHtml(a.msg)}&rdquo;</span>`);
+      }
+      return `<li>${num}${icon}<div class="action-body">${lines.join('')}</div></li>`;
     }).join('');
     return heading + `<ol class="action-list">${rows}</ol>`;
   }

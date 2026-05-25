@@ -151,19 +151,25 @@ export class Renderer {
       const [tc, tr] = stepCell(fromCol, fromRow, intoDir);
       let ok = await this._consumeLightAt(tc, tr, onMsg, /*announce*/ false);
       if (!ok) {
-        // Engine forgiveness: the player included a wait_for_green further
-        // down the action list (natural English order — "drive to the
-        // intersection, wait for the green, then turn"). Claim it now.
+        // Engine forgiveness for natural English order ("drive to the
+        // intersection, wait for the green, then turn"): a wait_for_green
+        // that follows the current movement action — separated only by
+        // narrative `wait` / `say` chunks — can be claimed for THIS entry.
+        // If another movement action (move, move_until, take_turn, turn,
+        // follow_road) sits before the wait, that wait was meant for a
+        // later light; don't claim it. This keeps the puzzle honest: if
+        // the player didn't include a wait for THIS light, they lose.
         for (let j = actionIndex + 1; j < actions.length; j++) {
           if (skipIndices.has(j)) continue;
-          if (actions[j].type === 'wait_for_green') {
+          const a = actions[j];
+          if (a.type === 'wait_for_green') {
             skipIndices.add(j);
             this._pendingWait = true;
-            // The wait wasn't announced earlier (it was claimed silently from
-            // later in the queue), so let _consumeLightAt narrate the hold.
             ok = await this._consumeLightAt(tc, tr, onMsg, /*announce*/ true);
             break;
           }
+          if (a.type === 'wait' || a.type === 'say') continue; // transparent
+          break; // hit a movement action — stop looking
         }
       }
       if (!ok) return null;
@@ -669,16 +675,27 @@ export class Renderer {
     ctx.fillStyle = BUILDING_ROOFS[Math.floor(rand() * BUILDING_ROOFS.length)];
     ctx.fillRect(bx, by, bw, roof);
 
-    // A couple of window dots on the facade below the roof, if there's room.
-    const winTop = by + roof + Math.max(1, bh * 0.08);
-    const winH = bh - roof - Math.max(1, bh * 0.08) * 2;
-    if (winH >= 3 && bw >= 6) {
+    // Window grid on the facade below the roof. Wide buildings get multiple
+    // windows per row; tall buildings get multiple rows. Square-ish dots.
+    const sideMargin = Math.max(1, bh * 0.08);
+    const winTop = by + roof + sideMargin;
+    const winAreaH = bh - roof - sideMargin * 2;
+    if (winAreaH >= 3 && bw >= 6) {
       ctx.fillStyle = 'rgba(70, 100, 140, 0.75)';
-      const winSize = Math.min(winH, bw * 0.22, 5);
-      const slots = Math.max(1, Math.floor(bw / (winSize * 2.2)));
-      const gap = bw / (slots + 1);
-      for (let i = 1; i <= slots; i++) {
-        ctx.fillRect(bx + gap * i - winSize / 2, winTop, winSize, Math.min(winSize, winH));
+      const winSize = Math.min(bw * 0.22, bh * 0.18, 6);
+      const cols = Math.max(1, Math.floor(bw / (winSize * 2.2)));
+      const rows = Math.max(1, Math.floor(winAreaH / (winSize * 2.0)));
+      const colGap = bw / (cols + 1);
+      const rowGap = winAreaH / (rows + 1);
+      for (let r = 1; r <= rows; r++) {
+        for (let c = 1; c <= cols; c++) {
+          ctx.fillRect(
+            bx + colGap * c - winSize / 2,
+            winTop + rowGap * r - winSize / 2,
+            winSize,
+            winSize,
+          );
+        }
       }
     }
   }

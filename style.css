@@ -612,20 +612,37 @@ body {
   min-width: 0;
 }
 
-.action-list .type {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+.action-list .source,
+.action-list .type,
+.action-list .msg {
+  font-size: 14px;
+  line-height: 1.4;
 }
 
-.action-list .msg { color: var(--text); font-size: 14px; }
+.action-list .source {
+  color: #cbd5e1;
+  font-style: italic;
+}
+
+.action-list .type {
+  color: var(--text-dim);
+}
+
+.action-list .type code {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.action-list .msg { color: var(--text); }
 
 .modal-body .muted {
   color: var(--text-dim);
   font-style: italic;
-  margin: 0;
+  margin: 0 0 12px;
 }
 
 @keyframes modal-in {
