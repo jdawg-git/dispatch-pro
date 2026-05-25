@@ -3,6 +3,9 @@
 import { generateMaze, randomSeed } from './maze.js';
 import { Renderer } from './renderer.js';
 import { createGame } from './game.js';
+import { recordSession } from './stats.js';
+
+recordSession();
 
 const els = {
   canvas:           document.getElementById('city-canvas'),

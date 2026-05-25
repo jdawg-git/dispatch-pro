@@ -1,0 +1,16 @@
+{
+  "name": "workspace",
+  "version": "1.0.0",
+  "description": "A natural-language city-driving puzzle. Type a route, hit TRANSMIT, watch the driver navigate. 3 attempts per generated map.",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "pg": "^8.21.0"
+  }
+}

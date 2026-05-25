@@ -5,6 +5,9 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import pg from 'pg';
+
+const { Pool } = pg;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -16,6 +19,15 @@ const GEMINI_API_KEY = env.GEMINI_API_KEY || process.env.GEMINI_API_KEY || '';
 
 if (!GEMINI_API_KEY) {
   console.warn('[dispatch] No GEMINI_API_KEY found. Copy .env.example to .env and add your key.');
+}
+
+// DB pool — only initialised when DATABASE_URL is present.
+const pool = process.env.DATABASE_URL
+  ? new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+  : null;
+
+if (!pool) {
+  console.warn('[dispatch] No DATABASE_URL found. Stats endpoints will be disabled.');
 }
 
 const MIME = {
@@ -39,6 +51,15 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && req.url === '/api/dispatch') {
       return await handleDispatch(req, res);
     }
+    if (req.method === 'POST' && req.url === '/api/stats') {
+      return await handleStatsWrite(req, res);
+    }
+    if (req.method === 'POST' && req.url === '/api/session') {
+      return await handleSession(req, res);
+    }
+    if (req.method === 'GET' && req.url === '/api/stats') {
+      return await handleStatsRead(req, res);
+    }
     if (req.method === 'GET' || req.method === 'HEAD') {
       return serveStatic(req, res);
     }
@@ -54,6 +75,212 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
   console.log(`[dispatch] http://localhost:${PORT}`);
 });
+
+// -------- Stats endpoints --------
+
+async function handleSession(req, res) {
+  if (!pool) {
+    res.writeHead(503, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ error: 'no_db' }));
+    return;
+  }
+  try {
+    await pool.query('INSERT INTO sessions DEFAULT VALUES');
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+  } catch (err) {
+    console.error('[stats] session insert error:', err.message);
+    res.writeHead(500, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ error: 'db_error' }));
+  }
+}
+
+async function handleStatsWrite(req, res) {
+  if (!pool) {
+    res.writeHead(503, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ error: 'no_db' }));
+    return;
+  }
+  const body = await readJson(req);
+  const {
+    outcome, failure_reason, difficulty, grid_size,
+    path_length, prompt_chars, attempts_used, beat_supervisor, actions_count,
+  } = body || {};
+  if (!outcome) {
+    res.writeHead(400, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ error: 'bad_request', message: 'outcome is required' }));
+    return;
+  }
+  try {
+    await pool.query(
+      `INSERT INTO game_results
+         (outcome, failure_reason, difficulty, grid_size, path_length,
+          prompt_chars, attempts_used, beat_supervisor, actions_count)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [
+        String(outcome).slice(0, 32),
+        failure_reason ? String(failure_reason).slice(0, 64) : null,
+        difficulty ? String(difficulty).slice(0, 32) : null,
+        grid_size ? String(grid_size).slice(0, 16) : null,
+        Number.isFinite(path_length) ? path_length : null,
+        Number.isFinite(prompt_chars) ? prompt_chars : null,
+        Number.isFinite(attempts_used) ? attempts_used : null,
+        beat_supervisor === true,
+        Number.isFinite(actions_count) ? actions_count : null,
+      ],
+    );
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+  } catch (err) {
+    console.error('[stats] write error:', err.message);
+    res.writeHead(500, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ error: 'db_error' }));
+  }
+}
+
+async function handleStatsRead(req, res) {
+  if (!pool) {
+    res.writeHead(503, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ error: 'no_db' }));
+    return;
+  }
+  try {
+    const [
+      totals,
+      sessionCount,
+      dailyGames,
+      engagementWins,
+      attemptsDistribution,
+      lockouts,
+      beatSupervisor,
+      failureReasons,
+      byDifficulty,
+      byGridSize,
+      recentActivity,
+    ] = await Promise.all([
+      pool.query(`
+        SELECT
+          COUNT(*)                                            AS total_games,
+          COUNT(*) FILTER (WHERE outcome = 'win')            AS total_wins,
+          COUNT(*) FILTER (WHERE outcome = 'fail')           AS total_fails,
+          COUNT(*) FILTER (WHERE outcome = 'lockout')        AS total_lockouts
+        FROM game_results
+      `),
+      pool.query('SELECT COUNT(*) AS total FROM sessions'),
+      pool.query(`
+        SELECT
+          DATE_TRUNC('day', created_at AT TIME ZONE 'UTC')::date AS day,
+          COUNT(*) AS count
+        FROM game_results
+        WHERE created_at >= NOW() - INTERVAL '30 days'
+        GROUP BY 1
+        ORDER BY 1 ASC
+      `),
+      pool.query(`
+        SELECT
+          ROUND(AVG(attempts_used), 2) AS avg_attempts_per_win
+        FROM game_results
+        WHERE outcome = 'win' AND attempts_used IS NOT NULL
+      `),
+      pool.query(`
+        SELECT attempts_used, COUNT(*) AS count
+        FROM game_results
+        WHERE attempts_used IS NOT NULL
+        GROUP BY attempts_used
+        ORDER BY attempts_used ASC
+      `),
+      pool.query(`
+        SELECT COUNT(*) AS lockout_count
+        FROM game_results
+        WHERE outcome = 'lockout'
+      `),
+      pool.query(`
+        SELECT
+          COUNT(*)                                           AS beat_count,
+          COUNT(*) FILTER (WHERE outcome = 'win')           AS win_count
+        FROM game_results
+        WHERE beat_supervisor = true
+      `),
+      pool.query(`
+        SELECT failure_reason, COUNT(*) AS count
+        FROM game_results
+        WHERE outcome IN ('fail', 'lockout') AND failure_reason IS NOT NULL
+        GROUP BY failure_reason
+        ORDER BY count DESC
+      `),
+      pool.query(`
+        SELECT difficulty, COUNT(*) AS count
+        FROM game_results
+        WHERE difficulty IS NOT NULL
+        GROUP BY difficulty
+        ORDER BY count DESC
+      `),
+      pool.query(`
+        SELECT grid_size, COUNT(*) AS count
+        FROM game_results
+        WHERE grid_size IS NOT NULL
+        GROUP BY grid_size
+        ORDER BY count DESC
+      `),
+      pool.query(`
+        SELECT
+          id, created_at, outcome, failure_reason, difficulty,
+          grid_size, prompt_chars, attempts_used, beat_supervisor
+        FROM game_results
+        ORDER BY created_at DESC
+        LIMIT 20
+      `),
+    ]);
+
+    const t = totals.rows[0];
+    const totalGames = Number(t.total_games);
+    const totalWins  = Number(t.total_wins);
+    const winRate    = totalGames > 0 ? Math.round((totalWins / totalGames) * 100) : 0;
+
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      totals: {
+        games:    totalGames,
+        wins:     totalWins,
+        fails:    Number(t.total_fails),
+        lockouts: Number(t.total_lockouts),
+        winRate,
+      },
+      sessions:   Number(sessionCount.rows[0].total),
+      dailyGames: dailyGames.rows.map(r => ({ day: r.day, count: Number(r.count) })),
+      engagement: {
+        avgAttemptsPerWin: engagementWins.rows[0]?.avg_attempts_per_win
+          ? Number(engagementWins.rows[0].avg_attempts_per_win) : null,
+        attemptsDistribution: attemptsDistribution.rows.map(r => ({
+          attempts: Number(r.attempts_used),
+          count: Number(r.count),
+        })),
+        lockoutCount: Number(lockouts.rows[0].lockout_count),
+        beatSupervisorCount: Number(beatSupervisor.rows[0].beat_count),
+        beatSupervisorWinCount: Number(beatSupervisor.rows[0].win_count),
+      },
+      failureReasons: failureReasons.rows.map(r => ({
+        reason: r.failure_reason,
+        count: Number(r.count),
+      })),
+      byDifficulty: byDifficulty.rows.map(r => ({
+        difficulty: r.difficulty,
+        count: Number(r.count),
+      })),
+      byGridSize: byGridSize.rows.map(r => ({
+        gridSize: r.grid_size,
+        count: Number(r.count),
+      })),
+      recentActivity: recentActivity.rows,
+    }));
+  } catch (err) {
+    console.error('[stats] read error:', err.message);
+    res.writeHead(500, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ error: 'db_error', message: err.message }));
+  }
+}
+
+// -------- Gemini proxy --------
 
 async function handleDispatch(req, res) {
   if (!GEMINI_API_KEY) {
@@ -129,9 +356,14 @@ function extractReplyText(data) {
   }
 }
 
+// -------- Static file server --------
+
 function serveStatic(req, res) {
   const urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
-  let rel = urlPath === '/' ? '/index.html' : urlPath;
+  let rel;
+  if (urlPath === '/') rel = '/index.html';
+  else if (urlPath === '/stats') rel = '/stats.html';
+  else rel = urlPath;
   // Prevent directory traversal
   const filePath = path.normalize(path.join(ROOT, rel));
   if (!filePath.startsWith(ROOT)) {
@@ -154,6 +386,8 @@ function serveStatic(req, res) {
     fs.createReadStream(filePath).pipe(res);
   });
 }
+
+// -------- Shared utilities --------
 
 function readJson(req) {
   return new Promise((resolve, reject) => {

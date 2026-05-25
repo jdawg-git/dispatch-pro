@@ -1,0 +1,555 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dispatch Pro — Stats</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --surface: #1a2129;
+      --surface-2: #232c36;
+      --border: #2f3a45;
+      --text: #e7edf3;
+      --text-dim: #9aa7b3;
+      --accent: #2563eb;
+      --danger: #ef4444;
+      --success: #22c55e;
+      --warn: #f59e0b;
+      --radius: 10px;
+      --radius-sm: 6px;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      -webkit-font-smoothing: antialiased;
+    }
+    body { min-height: 100dvh; display: flex; flex-direction: column; }
+
+    .page-header {
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .page-header h1 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+    }
+    .page-header h1 span { color: var(--text); }
+
+    .btn {
+      appearance: none;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 7px 14px;
+      font-size: 13px;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      background: var(--surface-2);
+      color: var(--text);
+      transition: background 120ms ease;
+    }
+    .btn:hover { background: #2c3743; }
+    .btn:active { transform: translateY(1px); }
+
+    .page-main {
+      flex: 1;
+      max-width: 960px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 20px 16px 40px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    /* Loading / error states */
+    .status-msg {
+      text-align: center;
+      color: var(--text-dim);
+      padding: 60px 20px;
+      font-size: 15px;
+    }
+    .status-msg.error { color: var(--danger); }
+
+    /* Section */
+    .section-title {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin: 0 0 10px;
+    }
+
+    /* KPI cards */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 10px;
+    }
+    .kpi-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+    }
+    .kpi-card .kpi-label {
+      font-size: 11px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 6px;
+    }
+    .kpi-card .kpi-value {
+      font-size: 28px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+    }
+    .kpi-card .kpi-sub {
+      font-size: 12px;
+      color: var(--text-dim);
+      margin-top: 4px;
+    }
+    .kpi-card.accent .kpi-value { color: var(--accent); }
+    .kpi-card.success .kpi-value { color: var(--success); }
+    .kpi-card.warn .kpi-value { color: var(--warn); }
+    .kpi-card.danger .kpi-value { color: var(--danger); }
+
+    /* Two-col layout for smaller sections */
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    @media (max-width: 560px) { .two-col { grid-template-columns: 1fr; } }
+
+    /* Panel */
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+    }
+    .panel .section-title { margin-bottom: 12px; }
+
+    /* Bar chart */
+    .bar-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .bar-row {
+      display: grid;
+      grid-template-columns: 110px 1fr 48px;
+      align-items: center;
+      gap: 10px;
+      font-size: 13px;
+    }
+    .bar-row .bar-label {
+      color: var(--text-dim);
+      text-align: right;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .bar-track {
+      background: var(--surface-2);
+      border-radius: 4px;
+      height: 10px;
+      overflow: hidden;
+    }
+    .bar-fill {
+      height: 100%;
+      border-radius: 4px;
+      background: var(--accent);
+      transition: width 500ms ease;
+    }
+    .bar-fill.success { background: var(--success); }
+    .bar-fill.danger  { background: var(--danger); }
+    .bar-fill.warn    { background: var(--warn); }
+    .bar-row .bar-count {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--text-dim);
+      text-align: right;
+    }
+
+    /* Daily chart */
+    .daily-chart {
+      display: flex;
+      align-items: flex-end;
+      gap: 3px;
+      height: 60px;
+      padding-top: 4px;
+    }
+    .daily-bar {
+      flex: 1;
+      background: var(--accent);
+      border-radius: 3px 3px 0 0;
+      min-height: 2px;
+      opacity: 0.75;
+      transition: opacity 120ms;
+      cursor: default;
+      position: relative;
+    }
+    .daily-bar:hover { opacity: 1; }
+    .daily-bar[title] {}
+
+    /* Attempts distribution */
+    .attempt-dist {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .attempt-chip {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 8px 14px;
+      text-align: center;
+    }
+    .attempt-chip .chip-label { font-size: 11px; color: var(--text-dim); }
+    .attempt-chip .chip-value { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+    /* Recent activity table */
+    .table-wrap { overflow-x: auto; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    thead th {
+      text-align: left;
+      padding: 6px 10px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      border-bottom: 1px solid var(--border);
+    }
+    tbody tr { border-bottom: 1px solid rgba(47,58,69,0.5); }
+    tbody tr:last-child { border-bottom: none; }
+    tbody td {
+      padding: 7px 10px;
+      color: var(--text-dim);
+      font-family: var(--mono);
+      white-space: nowrap;
+    }
+    tbody td.outcome-win  { color: var(--success); font-weight: 600; }
+    tbody td.outcome-fail { color: var(--danger); }
+    tbody td.outcome-lockout { color: var(--warn); }
+    .badge {
+      display: inline-block;
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-family: var(--mono);
+      background: rgba(37,99,235,0.2);
+      color: #93c5fd;
+      border: 1px solid rgba(96,165,250,0.3);
+    }
+    .empty-row td { text-align: center; padding: 20px; color: var(--text-dim); font-style: italic; font-family: var(--font); }
+  </style>
+</head>
+<body>
+  <header class="page-header">
+    <h1>📻 <span>Dispatch Pro</span> — Owner Stats</h1>
+    <button class="btn" id="refresh-btn">↺ Refresh</button>
+  </header>
+
+  <main class="page-main" id="page-main">
+    <div class="status-msg" id="status-msg">Loading…</div>
+  </main>
+
+  <script type="module">
+    const main = document.getElementById('page-main');
+    const statusMsg = document.getElementById('status-msg');
+    document.getElementById('refresh-btn').addEventListener('click', loadStats);
+
+    async function loadStats() {
+      statusMsg.style.display = 'block';
+      statusMsg.className = 'status-msg';
+      statusMsg.textContent = 'Loading…';
+      // Hide existing content sections
+      for (const el of main.querySelectorAll('.stats-section')) el.remove();
+
+      let data;
+      try {
+        const res = await fetch('/api/stats');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        data = await res.json();
+      } catch (e) {
+        statusMsg.className = 'status-msg error';
+        statusMsg.textContent = `Failed to load stats: ${e.message}`;
+        return;
+      }
+      statusMsg.style.display = 'none';
+      render(data);
+    }
+
+    function render(d) {
+      const { totals, sessions, dailyGames, engagement, failureReasons, byDifficulty, byGridSize, recentActivity } = d;
+      const totalFailLoss = totals.fails + totals.lockouts;
+
+      // ---- Volume & Growth ----
+      const volSection = section('Volume & Growth');
+      const kpiGrid = div('kpi-grid');
+
+      kpiGrid.append(
+        kpiCard('Total Games', fmt(totals.games), null, 'accent'),
+        kpiCard('Sessions', fmt(sessions), 'page loads'),
+        kpiCard('Win Rate', totals.winRate + '%', `${fmt(totals.wins)} wins`, 'success'),
+        kpiCard('Lockouts', fmt(totals.lockouts),
+          totals.games > 0 ? pct(totals.lockouts, totals.games) + '% of games' : null, 'warn'),
+      );
+      volSection.append(kpiGrid);
+
+      // Daily chart
+      if (dailyGames.length > 0) {
+        const chartWrap = div('panel');
+        chartWrap.style.marginTop = '10px';
+        const chartTitle = el('p', 'section-title', 'Games per day (last 30 days)');
+        const chart = div('daily-chart');
+        const maxVal = Math.max(...dailyGames.map(r => r.count), 1);
+        // Fill in missing days
+        const allDays = [];
+        const now = new Date();
+        for (let i = 29; i >= 0; i--) {
+          const d = new Date(now);
+          d.setUTCDate(d.getUTCDate() - i);
+          const key = d.toISOString().slice(0, 10);
+          const found = dailyGames.find(r => String(r.day).slice(0, 10) === key);
+          allDays.push({ day: key, count: found ? found.count : 0 });
+        }
+        for (const row of allDays) {
+          const bar = div('daily-bar');
+          const heightPct = Math.max(3, Math.round((row.count / maxVal) * 100));
+          bar.style.height = heightPct + '%';
+          bar.title = `${row.day}: ${row.count} game${row.count === 1 ? '' : 's'}`;
+          chart.append(bar);
+        }
+        chartWrap.append(chartTitle, chart);
+        volSection.append(chartWrap);
+      }
+
+      main.append(volSection);
+
+      // ---- Engagement Quality ----
+      const engSection = section('Engagement Quality');
+      const engGrid = div('kpi-grid');
+
+      const avgAttempts = engagement.avgAttemptsPerWin !== null
+        ? Number(engagement.avgAttemptsPerWin).toFixed(2) : '—';
+      const firstAttemptWins = engagement.attemptsDistribution.find(r => r.attempts === 1)?.count ?? 0;
+      const firstAttemptPct = totals.wins > 0 ? pct(firstAttemptWins, totals.wins) : 0;
+      const lockoutPct = totals.games > 0 ? pct(totals.lockouts, totals.games) : 0;
+      const beatPct = totals.wins > 0 ? pct(engagement.beatSupervisorCount, totals.wins) : 0;
+
+      engGrid.append(
+        kpiCard('Avg Attempts / Win', avgAttempts, 'on winning games'),
+        kpiCard('1st-Attempt Wins', firstAttemptPct + '%', `${fmt(firstAttemptWins)} of ${fmt(totals.wins)} wins`, 'success'),
+        kpiCard('Lockout Rate', lockoutPct + '%', `${fmt(totals.lockouts)} lockouts`, 'danger'),
+        kpiCard('Beat Supervisor', fmt(engagement.beatSupervisorCount), beatPct + '% of wins', 'accent'),
+      );
+      engSection.append(engGrid);
+
+      // Attempts distribution
+      if (engagement.attemptsDistribution.length > 0) {
+        const distWrap = div('panel');
+        distWrap.style.marginTop = '10px';
+        distWrap.append(el('p', 'section-title', 'Attempts used (all outcomes)'));
+        const chips = div('attempt-dist');
+        for (const row of engagement.attemptsDistribution) {
+          const chip = div('attempt-chip');
+          chip.append(
+            el('div', 'chip-value', fmt(row.count)),
+            el('div', 'chip-label', row.attempts + (row.attempts === 1 ? ' attempt' : ' attempts')),
+          );
+          chips.append(chip);
+        }
+        distWrap.append(chips);
+        engSection.append(distWrap);
+      }
+
+      main.append(engSection);
+
+      // ---- Failure Intelligence ----
+      if (failureReasons.length > 0) {
+        const failSection = section('Failure Intelligence');
+        const panel = div('panel');
+        panel.append(el('p', 'section-title', 'Loss reasons (fails + lockouts)'));
+        const totalFails = failureReasons.reduce((s, r) => s + r.count, 0);
+        const colors = ['danger', 'warn', ''];
+        panel.append(barList(failureReasons.map((r, i) => ({
+          label: r.reason,
+          count: r.count,
+          max: totalFails,
+          color: colors[i] || '',
+        }))));
+        failSection.append(panel);
+        main.append(failSection);
+      }
+
+      // ---- Player Preferences ----
+      const prefSection = section('Player Preferences');
+      const prefGrid = div('two-col');
+
+      if (byDifficulty.length > 0) {
+        const dp = div('panel');
+        dp.append(el('p', 'section-title', 'By difficulty'));
+        const total = byDifficulty.reduce((s, r) => s + r.count, 0);
+        dp.append(barList(byDifficulty.map(r => ({
+          label: capitalize(r.difficulty),
+          count: r.count,
+          max: total,
+        }))));
+        prefGrid.append(dp);
+      }
+
+      if (byGridSize.length > 0) {
+        const gp = div('panel');
+        gp.append(el('p', 'section-title', 'By grid size'));
+        const total = byGridSize.reduce((s, r) => s + r.count, 0);
+        gp.append(barList(byGridSize.map(r => ({
+          label: r.gridSize,
+          count: r.count,
+          max: total,
+        }))));
+        prefGrid.append(gp);
+      }
+
+      if (byDifficulty.length > 0 || byGridSize.length > 0) {
+        prefSection.append(prefGrid);
+        main.append(prefSection);
+      }
+
+      // ---- Recent Activity ----
+      const actSection = section('Recent Activity');
+      const tableWrap = div('panel table-wrap');
+      const tbl = document.createElement('table');
+      const thead = document.createElement('thead');
+      thead.innerHTML = `<tr>
+        <th>Time</th><th>Outcome</th><th>Difficulty</th>
+        <th>Grid</th><th>Prompt</th><th>Attempts</th>
+      </tr>`;
+      const tbody = document.createElement('tbody');
+
+      if (recentActivity.length === 0) {
+        const row = document.createElement('tr');
+        row.className = 'empty-row';
+        row.innerHTML = '<td colspan="6">No games recorded yet</td>';
+        tbody.append(row);
+      } else {
+        for (const r of recentActivity) {
+          const row = document.createElement('tr');
+          const ts = new Date(r.created_at);
+          const timeStr = ts.toLocaleDateString() + ' ' + ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          const outcomeClass = 'outcome-' + r.outcome;
+          const outcomeLabel = r.outcome === 'win'
+            ? (r.beat_supervisor ? '🏆 win' : '✓ win')
+            : r.outcome === 'lockout' ? '✗ lockout' : '✗ fail';
+          const failLabel = r.failure_reason ? `<br><span style="font-size:11px;opacity:0.7">${escHtml(r.failure_reason)}</span>` : '';
+          row.innerHTML = `
+            <td>${escHtml(timeStr)}</td>
+            <td class="${outcomeClass}">${outcomeLabel}${failLabel}</td>
+            <td>${r.difficulty ? escHtml(capitalize(r.difficulty)) : '—'}</td>
+            <td>${r.grid_size ? escHtml(r.grid_size) : '—'}</td>
+            <td>${r.prompt_chars !== null ? r.prompt_chars + ' chars' : '—'}</td>
+            <td>${r.attempts_used !== null ? r.attempts_used : '—'}</td>
+          `;
+          tbody.append(row);
+        }
+      }
+      tbl.append(thead, tbody);
+      tableWrap.append(tbl);
+      actSection.append(tableWrap);
+      main.append(actSection);
+    }
+
+    // ---- Helpers ----
+
+    function section(title) {
+      const s = document.createElement('section');
+      s.className = 'stats-section';
+      const h = el('h2', 'section-title', title);
+      s.append(h);
+      return s;
+    }
+
+    function kpiCard(label, value, sub = null, colorClass = '') {
+      const card = div('kpi-card' + (colorClass ? ' ' + colorClass : ''));
+      card.append(el('div', 'kpi-label', label));
+      card.append(el('div', 'kpi-value', String(value)));
+      if (sub) card.append(el('div', 'kpi-sub', sub));
+      return card;
+    }
+
+    function barList(rows) {
+      const list = div('bar-list');
+      for (const row of rows) {
+        const pctVal = row.max > 0 ? Math.round((row.count / row.max) * 100) : 0;
+        const barRow = div('bar-row');
+        barRow.append(el('span', 'bar-label', row.label));
+        const track = div('bar-track');
+        const fill = div('bar-fill' + (row.color ? ' ' + row.color : ''));
+        fill.style.width = pctVal + '%';
+        track.append(fill);
+        barRow.append(track);
+        barRow.append(el('span', 'bar-count', fmt(row.count)));
+        list.append(barRow);
+      }
+      return list;
+    }
+
+    function div(className) {
+      const d = document.createElement('div');
+      if (className) d.className = className;
+      return d;
+    }
+
+    function el(tag, className, text) {
+      const e = document.createElement(tag);
+      if (className) e.className = className;
+      if (text !== undefined) e.textContent = text;
+      return e;
+    }
+
+    function fmt(n) {
+      return Number(n).toLocaleString();
+    }
+
+    function pct(part, total) {
+      return total > 0 ? Math.round((part / total) * 100) : 0;
+    }
+
+    function capitalize(s) {
+      return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+    }
+
+    function escHtml(s) {
+      return String(s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    loadStats();
+  </script>
+</body>
+</html>

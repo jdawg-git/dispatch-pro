@@ -2,6 +2,7 @@
 
 import { transmit, GeminiError } from './gemini.js';
 import { play as playSfx, playRandomChirp, preloadAll as preloadSfx } from './audio.js';
+import { recordGame } from './stats.js';
 
 const MAX_ATTEMPTS = 3;
 
@@ -195,6 +196,17 @@ export function createGame({ renderer, els, showToast }) {
   }
 
   // -------- Outcomes --------
+  function statBase() {
+    return {
+      difficulty: els.difficulty.value || null,
+      grid_size:  state.maze ? `${state.maze.cols}×${state.maze.rows}` : null,
+      path_length:   state.maze?.dest?.distance ?? null,
+      prompt_chars:  state.lastPromptChars || null,
+      attempts_used: state.attemptsUsed,
+      actions_count: state.lastActions?.length ?? null,
+    };
+  }
+
   function onSuccess() {
     state.solved = true;
     state.mode = 'replay';
@@ -202,6 +214,7 @@ export function createGame({ renderer, els, showToast }) {
 
     const canned = state.maze?.solution?.english?.length ?? Infinity;
     const beat = state.lastPromptChars > 0 && state.lastPromptChars < canned;
+    recordGame({ ...statBase(), outcome: 'win', beat_supervisor: beat });
     if (beat) {
       fireConfetti();
       const diff = canned - state.lastPromptChars;
@@ -242,6 +255,7 @@ export function createGame({ renderer, els, showToast }) {
   function onFailRetry(result) {
     playSfx('lose');
     const reason = failReason(result);
+    recordGame({ ...statBase(), outcome: 'fail', failure_reason: reason, beat_supervisor: false });
     setDriverMessage({
       icon: '📻',
       msg: `Attempt ${state.attemptsUsed} failed — ${reason}. Try again, dispatch.`,
@@ -276,6 +290,7 @@ export function createGame({ renderer, els, showToast }) {
     state.mode = 'reveal';
     playSfx('lose');
     const reason = failReason(result);
+    recordGame({ ...statBase(), outcome: 'lockout', failure_reason: reason, beat_supervisor: false });
     setDriverMessage({
       icon: '📡',
       msg: `Out of attempts — ${reason} on the last one. Here is the route the dispatcher had in mind.`,
