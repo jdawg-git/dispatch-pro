@@ -355,7 +355,10 @@
 
       const avgAttempts = engagement.avgAttemptsPerWin !== null
         ? Number(engagement.avgAttemptsPerWin).toFixed(2) : '—';
-      const beatPct = totals.wins > 0 ? pct(engagement.beatSupervisorCount, totals.wins) : 0;
+      const beatPct   = totals.wins > 0 ? pct(engagement.beatSupervisorCount, totals.wins) : 0;
+      const hintPct   = totals.completedMaps > 0 ? pct(engagement.hintUsedCount, totals.completedMaps) : 0;
+      const hintWinPct = engagement.hintUsedCount > 0
+        ? pct(engagement.hintWins, engagement.hintUsedCount) : 0;
 
       engGrid.append(
         kpiCard('Avg Attempts / Win', avgAttempts, 'on winning games'),
@@ -364,6 +367,8 @@
         kpiCard('Lockout Rate', totals.lockoutRate + '%',
           `${fmt(totals.lockouts)} of ${fmt(totals.completedMaps)} maps played to end`, 'danger'),
         kpiCard('Beat Supervisor', fmt(engagement.beatSupervisorCount), beatPct + '% of wins', 'accent'),
+        kpiCard('Hint Used', hintPct + '%',
+          `${fmt(engagement.hintUsedCount)} maps · ${hintWinPct}% win rate with hint`),
       );
       engSection.append(engGrid);
 

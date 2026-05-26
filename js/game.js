@@ -56,6 +56,7 @@ export function createGame({ renderer, els, showToast }) {
     if (english) {
       els.dispatchInput.value = english;
       els.dispatchInput.dispatchEvent(new Event('input'));
+      state.hintUsed = true;
     }
     closeHintModal();
   });
@@ -105,6 +106,7 @@ export function createGame({ renderer, els, showToast }) {
     state.lastActions = null;
     state.lastActionsSource = null;
     state.suppressNextChirp = false;
+    state.hintUsed = false;
     state.mode = 'play';
     els.hintBtn.hidden = true;
     clearLog();
@@ -230,6 +232,7 @@ export function createGame({ renderer, els, showToast }) {
       prompt_chars:  state.lastPromptChars || null,
       attempts_used: state.attemptsUsed,
       actions_count: state.lastActions?.length ?? null,
+      hint_used:     state.hintUsed,
     };
   }
 

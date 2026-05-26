@@ -66,8 +66,10 @@ async function initDb() {
         prompt_chars INTEGER,
         attempts_used INTEGER,
         beat_supervisor BOOLEAN DEFAULT FALSE,
-        actions_count INTEGER
+        actions_count INTEGER,
+        hint_used BOOLEAN DEFAULT FALSE
       );
+      ALTER TABLE game_results ADD COLUMN IF NOT EXISTS hint_used BOOLEAN DEFAULT FALSE;
     `);
     console.log('[dispatch] DB schema ready');
   } catch (err) {
@@ -133,7 +135,7 @@ async function handleStatsWrite(req, res) {
   const body = await readJson(req);
   const {
     outcome, failure_reason, difficulty, grid_size,
-    path_length, prompt_chars, attempts_used, beat_supervisor, actions_count,
+    path_length, prompt_chars, attempts_used, beat_supervisor, actions_count, hint_used,
   } = body || {};
   if (!outcome) {
     res.writeHead(400, { 'content-type': 'application/json' });
@@ -144,8 +146,8 @@ async function handleStatsWrite(req, res) {
     await pool.query(
       `INSERT INTO game_results
          (outcome, failure_reason, difficulty, grid_size, path_length,
-          prompt_chars, attempts_used, beat_supervisor, actions_count)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          prompt_chars, attempts_used, beat_supervisor, actions_count, hint_used)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
       [
         String(outcome).slice(0, 32),
         failure_reason ? String(failure_reason).slice(0, 64) : null,
@@ -156,6 +158,7 @@ async function handleStatsWrite(req, res) {
         Number.isFinite(attempts_used) ? attempts_used : null,
         beat_supervisor === true,
         Number.isFinite(actions_count) ? actions_count : null,
+        hint_used === true,
       ],
     );
     res.writeHead(200, { 'content-type': 'application/json' });
@@ -182,6 +185,7 @@ async function handleStatsRead(req, res) {
       attemptsDistribution,
       retryStats,
       beatSupervisor,
+      hintStats,
       failureReasons,
       byDifficulty,
       byGridSize,
@@ -232,6 +236,13 @@ async function handleStatsRead(req, res) {
         WHERE beat_supervisor = true
       `),
       pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE outcome IN ('win','lockout')) AS hint_used_count,
+          COUNT(*) FILTER (WHERE outcome = 'win')              AS hint_wins
+        FROM game_results
+        WHERE hint_used = true
+      `),
+      pool.query(`
         SELECT failure_reason, COUNT(*) AS count
         FROM game_results
         WHERE outcome IN ('fail', 'lockout') AND failure_reason IS NOT NULL
@@ -275,6 +286,10 @@ async function handleStatsRead(req, res) {
     const completedTotal  = Number(rs.completed_total);
     const retryRate       = completedTotal > 0 ? Math.round((retriedCount / completedTotal) * 100) : 0;
 
+    const hs = hintStats.rows[0];
+    const hintUsedCount = Number(hs.hint_used_count);
+    const hintWins      = Number(hs.hint_wins);
+
     const totalFailReasons = failureReasons.rows.reduce((s, r) => s + Number(r.count), 0);
 
     res.writeHead(200, { 'content-type': 'application/json' });
@@ -302,6 +317,8 @@ async function handleStatsRead(req, res) {
         completedTotal,
         beatSupervisorCount: Number(beatSupervisor.rows[0].beat_count),
         beatSupervisorWinCount: Number(beatSupervisor.rows[0].win_count),
+        hintUsedCount,
+        hintWins,
       },
       failureReasons: failureReasons.rows.map(r => {
         const count = Number(r.count);
