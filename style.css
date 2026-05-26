@@ -261,6 +261,40 @@ body {
   50%      { box-shadow: 0 0 0 8px rgba(37, 99, 235, 0); }
 }
 
+.hint-btn {
+  margin-left: auto;
+  background: none;
+  border: 1px solid var(--text-dim);
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 2px 9px;
+  cursor: pointer;
+  line-height: 1.5;
+  transition: color 120ms, border-color 120ms;
+}
+.hint-btn:hover { color: var(--text); border-color: var(--text); }
+
+.modal-footer {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  padding: 12px 20px 20px;
+  border-top: 1px solid var(--surface-2);
+}
+
+.btn-ghost {
+  background: none;
+  border: 1px solid var(--surface-2);
+  color: var(--text-dim);
+  border-radius: 8px;
+  padding: 8px 18px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: color 120ms, border-color 120ms;
+}
+.btn-ghost:hover { color: var(--text); border-color: var(--text-dim); }
+
 /* Driver display — single-line "what the driver is saying right now". */
 .log-wrap {
   position: relative;

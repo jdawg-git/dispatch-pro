@@ -44,8 +44,24 @@ export function createGame({ renderer, els, showToast }) {
       closeInspectModal();
     }
   });
+  els.hintBtn.addEventListener('click', openHintModal);
+  els.hintModal.addEventListener('click', (e) => {
+    if (e.target instanceof Element && e.target.hasAttribute('data-close')) {
+      closeHintModal();
+    }
+  });
+  els.hintNoBtn.addEventListener('click', closeHintModal);
+  els.hintYesBtn.addEventListener('click', () => {
+    const english = state.maze?.solution?.english;
+    if (english) {
+      els.dispatchInput.value = english;
+      els.dispatchInput.dispatchEvent(new Event('input'));
+    }
+    closeHintModal();
+  });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !els.actionsModal.hidden) closeInspectModal();
+    if (e.key === 'Escape' && !els.hintModal.hidden) closeHintModal();
   });
 
   function onPrimaryClick() {
@@ -64,6 +80,15 @@ export function createGame({ renderer, els, showToast }) {
   function closeInspectModal() {
     els.actionsModal.hidden = true;
     els.inspectBtn.focus();
+  }
+
+  function openHintModal() {
+    els.hintModal.hidden = false;
+    els.hintNoBtn.focus();
+  }
+  function closeHintModal() {
+    els.hintModal.hidden = true;
+    els.hintBtn.focus();
   }
 
   return { reset };

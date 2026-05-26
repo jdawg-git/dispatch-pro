@@ -51,6 +51,7 @@
           <span class="attempt-dot" data-i="1"></span>
           <span class="attempt-dot" data-i="2"></span>
           <span class="attempt-label" id="attempt-label">Attempt 1 of 3</span>
+          <button id="hint-btn" class="hint-btn" type="button">Hint</button>
         </div>
 
         <div class="log-wrap">
@@ -80,6 +81,23 @@
   </main>
 
   <div id="toast" class="toast" role="status" hidden></div>
+
+  <div class="modal" id="hint-modal" hidden role="dialog" aria-modal="true" aria-labelledby="hint-modal-title">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2 id="hint-modal-title">💡 Hint</h2>
+        <button class="modal-close" type="button" data-close aria-label="Close">×</button>
+      </div>
+      <div class="modal-body">
+        <p>Would you like to see the Dispatch Supervisor's route directions?</p>
+      </div>
+      <div class="modal-footer">
+        <button id="hint-no-btn" class="btn btn-ghost" type="button">No Thanks</button>
+        <button id="hint-yes-btn" class="btn btn-primary" type="button">Yes!</button>
+      </div>
+    </div>
+  </div>
 
   <div class="modal" id="actions-modal" hidden role="dialog" aria-modal="true" aria-labelledby="actions-modal-title">
     <div class="modal-backdrop" data-close></div>
