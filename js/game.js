@@ -106,6 +106,7 @@ export function createGame({ renderer, els, showToast }) {
     state.lastActionsSource = null;
     state.suppressNextChirp = false;
     state.mode = 'play';
+    els.hintBtn.hidden = true;
     clearLog();
     els.dispatchInput.value = '';
     els.dispatchInput.readOnly = false;
@@ -281,6 +282,10 @@ export function createGame({ renderer, els, showToast }) {
     playSfx('lose');
     const reason = failReason(result);
     recordGame({ ...statBase(), outcome: 'fail', failure_reason: reason, beat_supervisor: false });
+    els.hintBtn.hidden = false;
+    els.hintBtn.classList.remove('shake');
+    void els.hintBtn.offsetWidth;
+    els.hintBtn.classList.add('shake');
     setDriverMessage({
       icon: '📻',
       msg: `Attempt ${state.attemptsUsed} failed — ${reason}. Try again, dispatch.`,
