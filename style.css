@@ -263,17 +263,17 @@ body {
 
 .hint-btn {
   margin-left: auto;
-  background: none;
-  border: 1px solid var(--text-dim);
+  background: var(--accent);
+  border: none;
   border-radius: 6px;
-  color: var(--text-dim);
+  color: #fff;
   font-size: 12px;
   padding: 2px 9px;
   cursor: pointer;
   line-height: 1.5;
-  transition: color 120ms, border-color 120ms;
+  transition: opacity 120ms;
 }
-.hint-btn:hover { color: var(--text); border-color: var(--text); }
+.hint-btn:hover { opacity: 0.85; }
 
 @keyframes hint-shake {
   0%   { transform: translateX(0); }
