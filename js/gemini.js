@@ -3,15 +3,16 @@
 // are, what "driver's left" maps to) — this prompt deliberately never asks
 // the model for dx/dy or compass directions.
 
-import { passageList, intersectionList } from './maze.js';
+import { passageList, intersectionList, intersectionsAlongPath } from './maze.js';
 
 export function buildPrompt(maze) {
   const { cols, rows, dest } = maze;
   const initialHeading = startHeadingName(maze);
   const passages = passageList(maze).join(', ');
-  const intersections = intersectionList(maze);
-  const intersectionsLine = intersections.length
-    ? intersections.join(', ')
+  const intersections = intersectionsAlongPath(maze);
+  const intersectionCount = intersections.length;
+  const intersectionsLine = intersectionCount
+    ? `${intersectionCount} total, in the order the driver encounters them: ${intersections.join(', ')}`
     : 'NONE — this maze is a single winding corridor with no choice points';
   const litCells = maze.lights && maze.lights.size
     ? [...maze.lights.values()].map(l => `(${l.col},${l.row})`).join(', ')
@@ -25,7 +26,7 @@ GRID (for context only — do not emit coordinates)
 - ${cols} cols × ${rows} rows. Start (0,0). Destination (${dest.col},${dest.row}).
 - Driver starts facing ${initialHeading} (the only open road out of the start cell).
 - Open passages: ${passages}
-- Intersections (the ONLY real choice points): ${intersectionsLine}
+- Intersections on the solution path (the ONLY real choice points): ${intersectionsLine}
 - Lit intersections (traffic lights — must wait for green): ${litCells}
 
 BEND vs INTERSECTION — read carefully
@@ -110,6 +111,49 @@ More examples
 - "Drive to the next intersection and turn left" (NO wait mentioned, even if a lit intersection is on the route) → [{ "type":"move_until","target":"intersection",...}, { "type":"turn", "dir":"left",...}] — NEVER add a wait_for_green the player didn't ask for. Running the red is their problem.
 - "Follow the road to the destination" (NO wait mentioned) → [{ "type":"follow_road", ... }] — even if the route passes lit intersections, do NOT auto-insert waits.
 - "Continue straight through" / "Go straight through the intersection" / "Roll straight through" → [{ "type":"move", "count":1, ... }] (a single forward step that crosses the intersection cell — needed because follow_road STOPS at intersections; if the canonical route goes straight through one without turning, the driver still needs an explicit cross step).
+
+SEQUENTIAL INTERSECTION LISTS — critical, read carefully
+When the player gives a direction for EACH intersection using words like "at each intersection", "at every intersection", "at intersections turn X, Y, Z respectively", or lists multiple comma-separated turn directions tied to intersections — emit ONE pair of (move_until intersection + turn) per listed direction, in order. NEVER collapse a list of N directions into fewer pairs.
+- Count the listed directions — that is exactly how many pairs to emit.
+- "Straight" in a list means go forward one block through the intersection: emit { "type":"move", "count":1, ... } instead of a turn action for that slot.
+- The Intersections count above tells you how many intersections are on the route — use it as a sanity check, but always trust the player's listed directions as the count.
+
+Example — "At each intersection turn left, right, left" (3 listed directions → 3 pairs):
+[
+  { "type":"move_until","target":"intersection", "msg":"...", "icon":"..." },
+  { "type":"turn","dir":"left", "msg":"...", "icon":"..." },
+  { "type":"move_until","target":"intersection", "msg":"...", "icon":"..." },
+  { "type":"turn","dir":"right", "msg":"...", "icon":"..." },
+  { "type":"move_until","target":"intersection", "msg":"...", "icon":"..." },
+  { "type":"turn","dir":"left", "msg":"...", "icon":"..." }
+]
+
+Example — "At intersections turn left, straight, right, respectively" (3 listed directions → 3 pairs, middle one is straight):
+[
+  { "type":"move_until","target":"intersection", ... },
+  { "type":"turn","dir":"left", ... },
+  { "type":"move_until","target":"intersection", ... },
+  { "type":"move","count":1, ... },
+  { "type":"move_until","target":"intersection", ... },
+  { "type":"turn","dir":"right", ... }
+]
+
+REPEATING PATTERNS ("always", "every time", "at every intersection") — distinct from a single turn
+Only use this pattern when the player uses a universal quantifier — "always", "every", "each time", "at every intersection", "at each intersection" — paired with a SINGLE direction (not a comma-separated list). Emit one (follow_road + turn) pair per intersection on the route, followed by a final follow_road to reach the destination.
+- GUARD: a plain "turn left at the intersection" / "go to the intersection and turn left" is still just ONE pair. Do NOT over-generate.
+- TRIGGER words: "always turn X", "turn X at every intersection", "take a X at each intersection", "every intersection take a X".
+
+Example — "Always turn left at intersections" on a maze with 3 intersections:
+[
+  { "type":"follow_road", ... },
+  { "type":"turn","dir":"left", ... },
+  { "type":"follow_road", ... },
+  { "type":"turn","dir":"left", ... },
+  { "type":"follow_road", ... },
+  { "type":"turn","dir":"left", ... },
+  { "type":"follow_road", ... }
+]
+(The final follow_road drives from the last intersection to the destination.)
 
 DRIVER PERSONA (use this voice for every "msg")
 - Salty veteran city cabbie on the radio. Calm under pressure, a bit world-weary, deadpan, dry.

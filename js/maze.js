@@ -625,6 +625,57 @@ export function intersectionList(maze) {
   return out;
 }
 
+// Intersections along the shortest solution path from (0,0) to dest, in the
+// order the driver will encounter them. Uses iterative BFS (no recursion) to
+// find the path, then walks it collecting 3+-open-road cells.
+// Falls back to intersectionList() if the destination is unreachable.
+export function intersectionsAlongPath(maze) {
+  const { cols, rows, grid, dest } = maze;
+  const STEP = { n: [0, -1], s: [0, 1], e: [1, 0], w: [-1, 0] };
+
+  // Iterative BFS: visited maps "col,row" → {fromCol, fromRow}
+  const visited = new Map();
+  visited.set('0,0', { fromCol: -1, fromRow: -1 });
+  const queue = [[0, 0]];
+  let found = false;
+
+  outer: while (queue.length) {
+    const [col, row] = queue.shift();
+    if (col === dest.col && row === dest.row) { found = true; break; }
+    const cell = grid[row][col];
+    for (const [d, [dc, dr]] of Object.entries(STEP)) {
+      if (!cell[d]) continue;
+      const nc = col + dc, nr = row + dr;
+      if (nc < 0 || nr < 0 || nc >= cols || nr >= rows) continue;
+      const key = `${nc},${nr}`;
+      if (visited.has(key)) continue;
+      visited.set(key, { fromCol: col, fromRow: row });
+      queue.push([nc, nr]);
+    }
+  }
+
+  if (!found) return intersectionList(maze);
+
+  // Reconstruct path by back-tracking from dest to start, then reverse.
+  const path = [];
+  let col = dest.col, row = dest.row;
+  while (col !== -1) {
+    path.push([col, row]);
+    const prev = visited.get(`${col},${row}`);
+    col = prev.fromCol; row = prev.fromRow;
+  }
+  path.reverse();
+
+  // Collect cells with 3+ open roads, in encounter order.
+  const out = [];
+  for (const [c, r] of path) {
+    const cell = grid[r][c];
+    const open = (cell.n ? 1 : 0) + (cell.s ? 1 : 0) + (cell.e ? 1 : 0) + (cell.w ? 1 : 0);
+    if (open >= 3) out.push(`(${c},${r})`);
+  }
+  return out;
+}
+
 // Sanity check: every cell reachable from (0,0)? Used only in dev assertions.
 export function isFullyConnected(maze) {
   const { cols, rows, grid } = maze;
